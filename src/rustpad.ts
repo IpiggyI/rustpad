@@ -11,6 +11,7 @@ export type RustpadOptions = {
   readonly uri: string;
   readonly editor: editor.IStandaloneCodeEditor;
   readonly onConnected?: () => void;
+  readonly onReady?: () => void;
   readonly onDisconnected?: () => void;
   readonly onDesynchronized?: () => void;
   readonly onChangeLanguage?: (language: string) => void;
@@ -42,18 +43,21 @@ class Rustpad {
   private revision: number = 0;
   private outstanding?: OpSeq;
   private buffer?: OpSeq;
+  private ready: boolean = false;
+  private readyId?: number;
   private users: Record<number, UserInfo> = {};
   private userCursors: Record<number, CursorData> = {};
   private myInfo?: UserInfo;
   private cursorData: CursorData = { cursors: [], selections: [] };
 
   // Intermittent local editor state
-  private lastValue: string = "";
+  private lastValue: string;
   private ignoreChanges: boolean = false;
   private oldDecorations: string[] = [];
 
   constructor(readonly options: RustpadOptions) {
     this.model = options.editor.getModel()!;
+    this.lastValue = this.model.getValue();
     this.onChangeHandle = options.editor.onDidChangeModelContent((e) =>
       this.onChange(e),
     );
@@ -89,6 +93,9 @@ class Rustpad {
   dispose() {
     window.clearInterval(this.tryConnectId);
     window.clearInterval(this.resetFailuresId);
+    if (this.readyId !== undefined) {
+      window.clearTimeout(this.readyId);
+    }
     this.onSelectionHandle.dispose();
     this.onCursorHandle.dispose();
     this.onChangeHandle.dispose();
@@ -159,7 +166,12 @@ class Rustpad {
   private handleMessage(msg: ServerMsg) {
     if (msg.Identity !== undefined) {
       this.me = msg.Identity;
+      this.readyId = window.setTimeout(() => this.markReady(), 100);
     } else if (msg.History !== undefined) {
+      if (this.readyId !== undefined) {
+        window.clearTimeout(this.readyId);
+        this.readyId = undefined;
+      }
       const { start, operations } = msg.History;
       if (start > this.revision) {
         console.warn("History message has start greater than last operation.");
@@ -176,6 +188,7 @@ class Rustpad {
           this.applyServer(operation);
         }
       }
+      this.markReady();
     } else if (msg.Language !== undefined) {
       this.options.onChangeLanguage?.(msg.Language);
     } else if (msg.UserInfo !== undefined) {
@@ -198,6 +211,13 @@ class Rustpad {
         this.updateCursors();
       }
     }
+  }
+
+  private markReady() {
+    if (this.ready) return;
+    this.ready = true;
+    this.readyId = undefined;
+    this.options.onReady?.();
   }
 
   private serverAck() {

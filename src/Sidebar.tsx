@@ -13,7 +13,7 @@ import {
   Text,
   useToast,
 } from "@chakra-ui/react";
-import { VscRepo } from "react-icons/vsc";
+import { VscCloudDownload, VscRepo } from "react-icons/vsc";
 
 import ConnectionStatus from "./ConnectionStatus";
 import User from "./User";
@@ -25,11 +25,16 @@ export type SidebarProps = {
   connection: "connected" | "disconnected" | "desynchronized";
   darkMode: boolean;
   language: string;
+  wordWrap: boolean;
+  blockMode: boolean;
   currentUser: UserInfo;
   users: Record<number, UserInfo>;
   onDarkModeChange: () => void;
+  onWordWrapChange: () => void;
+  onBlockModeChange: () => void;
   onLanguageChange: (language: string) => void;
   onLoadSample: () => void;
+  onExport: () => void;
   onChangeName: (name: string) => void;
   onChangeColor: () => void;
 };
@@ -39,11 +44,16 @@ function Sidebar({
   connection,
   darkMode,
   language,
+  wordWrap,
+  blockMode,
   currentUser,
   users,
   onDarkModeChange,
+  onWordWrapChange,
+  onBlockModeChange,
   onLanguageChange,
   onLoadSample,
+  onExport,
   onChangeName,
   onChangeColor,
 }: SidebarProps) {
@@ -78,6 +88,16 @@ function Sidebar({
       <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
         <Heading size="sm">Dark Mode</Heading>
         <Switch isChecked={darkMode} onChange={onDarkModeChange} />
+      </Flex>
+
+      <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
+        <Heading size="sm">Word Wrap</Heading>
+        <Switch isChecked={wordWrap} onChange={onWordWrapChange} />
+      </Flex>
+
+      <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
+        <Heading size="sm">Block Mode</Heading>
+        <Switch isChecked={blockMode} onChange={onBlockModeChange} />
       </Flex>
 
       <Heading mt={4} mb={1.5} size="sm">
@@ -122,6 +142,20 @@ function Sidebar({
           </Button>
         </InputRightElement>
       </InputGroup>
+
+      <Button
+        size="sm"
+        colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+        borderColor={darkMode ? "blue.400" : "blue.600"}
+        color={darkMode ? "blue.400" : "blue.600"}
+        variant="outline"
+        leftIcon={<VscCloudDownload />}
+        mt={2}
+        w="full"
+        onClick={onExport}
+      >
+        Export file
+      </Button>
 
       <Heading mt={4} mb={1.5} size="sm">
         Active Users
