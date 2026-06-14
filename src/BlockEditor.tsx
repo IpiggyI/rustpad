@@ -64,6 +64,14 @@ function BlockEditor({
     useState<editor.IStandaloneCodeEditor>();
   const rustpad = useRef<Rustpad>();
   const [users, setUsers] = useState<Record<number, UserInfo>>({});
+  // Keep the latest onContentChange in a ref so the connection effect below does
+  // not depend on it. The parent passes a fresh inline callback every render;
+  // depending on it would dispose+recreate the Rustpad connection (and reset the
+  // model) on every parent render.
+  const onContentChangeRef = useRef(onContentChange);
+  useEffect(() => {
+    onContentChangeRef.current = onContentChange;
+  });
 
   const docId = `page:${pageId}:block:${block.id}`;
 
@@ -78,13 +86,29 @@ function BlockEditor({
   useEffect(() => {
     if (editorInstance?.getModel() && !collapsed) {
       const model = editorInstance.getModel()!;
-      model.setValue(initialContent ?? "");
+      // Connect with an empty model and let the server History sync the real
+      // document first; only seed the local snapshot content via onReady when
+      // the server doc is empty. Pre-filling before connecting made the server
+      // History stack on top of the seed -> content doubled (same root cause as
+      // the SingleDocView fix).
+      const seed = initialContent;
+      model.setValue("");
       model.setEOL(0);
-      onContentChange(model.getValue());
+      onContentChangeRef.current(model.getValue());
       rustpad.current = new Rustpad({
         uri: getWsUri(docId),
         editor: editorInstance,
         onConnected: () => setConnection("connected"),
+        onReady: () => {
+          if (seed && model.getValue() === "") {
+            const range = model.getFullModelRange();
+            model.pushEditOperations(
+              editorInstance.getSelections(),
+              [{ range, text: seed }],
+              () => null,
+            );
+          }
+        },
         onDisconnected: () => setConnection("disconnected"),
         onDesynchronized: () => setConnection("desynchronized"),
         onChangeUsers: setUsers,
@@ -94,7 +118,7 @@ function BlockEditor({
         rustpad.current = undefined;
       };
     }
-  }, [docId, editorInstance, collapsed, initialContent, onContentChange]);
+  }, [docId, editorInstance, collapsed, initialContent]);
 
   useEffect(() => {
     editorInstance?.updateOptions({ wordWrap: wordWrap ? "on" : "off" });
@@ -102,11 +126,12 @@ function BlockEditor({
 
   useEffect(() => {
     if (!editorInstance) return;
-    onContentChange(editorInstance.getValue());
-    return editorInstance.onDidChangeModelContent(() => {
-      onContentChange(editorInstance.getValue());
-    }).dispose;
-  }, [editorInstance, onContentChange]);
+    onContentChangeRef.current(editorInstance.getValue());
+    const disposable = editorInstance.onDidChangeModelContent(() => {
+      onContentChangeRef.current(editorInstance.getValue());
+    });
+    return () => disposable.dispose();
+  }, [editorInstance]);
 
   const startResize = useCallback(
     (e: React.MouseEvent) => {

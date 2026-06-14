@@ -75,26 +75,26 @@ export function useManifest(
   useEffect(() => {
     function initialize(text: string, headless: RustpadHeadless) {
       const parsed = parseManifest(text);
-      if (parsed) {
-        const next =
-          initialManifestRef.current ??
-          (parsed.blocks.length > 0
-            ? parsed
-            : fallbackManifest.current);
-        lastValidManifest.current = next;
-        setManifest(next);
+      if (parsed && parsed.blocks.length > 0) {
+        // Server already holds a manifest: the server is the source of truth.
+        // Never overwrite it with the local initial manifest, which would revert
+        // remote edits (e.g. blocks added by another client) and fight back and
+        // forth with other clients.
+        lastValidManifest.current = parsed;
+        setManifest(parsed);
         initialized.current = true;
-        if (initialManifestRef.current || parsed.blocks.length === 0) {
-          headless.replaceContent(serializeManifest(next));
-        }
-      } else if (!initialized.current && !text.trim()) {
+        return;
+      }
+      // Server has no usable manifest (empty text, corrupt JSON, or zero blocks):
+      // seed it once from the local initial / fallback manifest.
+      if (!initialized.current) {
         const init: Manifest = initialManifestRef.current ?? fallbackManifest.current;
         initialized.current = true;
         lastValidManifest.current = init;
         setManifest(init);
         headless.replaceContent(serializeManifest(init));
         const block = init.blocks[0];
-        if (initialBlockRef.current) {
+        if (initialBlockRef.current && block) {
           window.setTimeout(() => {
             const blockHeadless = new RustpadHeadless({
               uri: getWsUri(`page:${pageId}:block:${block.id}`),
