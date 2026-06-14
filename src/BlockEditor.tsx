@@ -16,6 +16,8 @@ import {
   VscChevronRight,
   VscCircleFilled,
   VscClose,
+  VscCloudDownload,
+  VscCopy,
   VscTriangleDown,
   VscTriangleUp,
 } from "react-icons/vsc";
@@ -36,6 +38,8 @@ type BlockEditorProps = {
   onRemoveBlock: () => void;
   onMoveBlock: (direction: "up" | "down") => void;
   onContentChange: (content: string) => void;
+  onCopyBlock: () => void;
+  onExportBlock: () => void;
 };
 
 function BlockEditor({
@@ -48,6 +52,8 @@ function BlockEditor({
   onRemoveBlock,
   onMoveBlock,
   onContentChange,
+  onCopyBlock,
+  onExportBlock,
 }: BlockEditorProps) {
   const storageKey = `block-collapsed:${pageId}:${block.id}`;
   const [collapsed, setCollapsed] = useLocalStorageState(storageKey, {
@@ -225,6 +231,20 @@ function BlockEditor({
         )}
 
         <HStack spacing={0} ml="auto">
+          <IconButton
+            aria-label="Copy block content"
+            icon={<Icon as={VscCopy} />}
+            size="xs"
+            variant="ghost"
+            onClick={onCopyBlock}
+          />
+          <IconButton
+            aria-label="Export block"
+            icon={<Icon as={VscCloudDownload} />}
+            size="xs"
+            variant="ghost"
+            onClick={onExportBlock}
+          />
           <IconButton
             aria-label="Move up"
             icon={<Icon as={VscTriangleUp} />}

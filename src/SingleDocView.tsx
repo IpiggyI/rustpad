@@ -16,12 +16,6 @@ import languageExtensions from "./extensions";
 import ReadCodeConfirm from "./ReadCodeConfirm";
 import Sidebar from "./Sidebar";
 import animals from "./animals.json";
-import {
-  clearBlockToSingleTransfer,
-  parseBlockText,
-  saveSingleToBlockTransfer,
-  takeBlockToSingleTransfer,
-} from "./blockModeSync";
 import languages from "./languages.json";
 import Rustpad, { UserInfo } from "./rustpad";
 import { getWsUri } from "./useHash";
@@ -68,33 +62,11 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
       const model = editor.getModel()!;
       model.setValue("");
       model.setEOL(0); // LF
-      const blockTransfer = takeBlockToSingleTransfer(id);
-      if (blockTransfer) {
-        // Don't pre-fill the model before connecting: let the server History
-        // sync the real document into the model first, then onReady injects the
-        // block content as a proper edit (correct OT base length). Pre-filling
-        // here desyncs `lastValue` from the server and gets the socket closed.
-        setLanguage(blockTransfer.language);
-        window.setTimeout(() => clearBlockToSingleTransfer(id), 0);
-      }
       rustpad.current = new Rustpad({
         uri: getWsUri(id),
         editor,
         onConnected: () => {
           setConnection("connected");
-        },
-        onReady: () => {
-          if (blockTransfer && model.getValue() !== blockTransfer.content) {
-            const range = model.getFullModelRange();
-            model.pushEditOperations(
-              editor.getSelections(),
-              [{ range, text: blockTransfer.content }],
-              () => null,
-            );
-          }
-          if (blockTransfer) {
-            rustpad.current?.setLanguage(blockTransfer.language);
-          }
         },
         onDisconnected: () => setConnection("disconnected"),
         onDesynchronized: () => {
@@ -158,12 +130,30 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
     URL.revokeObjectURL(url);
   }
 
+  async function handleCopyContent() {
+    const content = editor?.getModel()?.getValue();
+    if (content == null) return;
+    try {
+      await navigator.clipboard.writeText(content);
+      toast({
+        title: "Copied!",
+        description: "Content copied to clipboard",
+        status: "success",
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch {
+      toast({
+        title: "Copy failed",
+        description: "Clipboard access was denied by the browser.",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+    }
+  }
+
   function handleBlockModeChange() {
-    const snapshot = parseBlockText(editor?.getValue() ?? "", language);
-    saveSingleToBlockTransfer(id, {
-      snapshot,
-      documentLanguage: language,
-    });
     window.location.hash = `page:${id}`;
   }
 
@@ -219,7 +209,6 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
           darkMode={darkMode}
           language={language}
           wordWrap={wordWrap}
-          blockMode={false}
           currentUser={{ name, hue }}
           users={users}
           onDarkModeChange={onDarkModeChange}
@@ -228,6 +217,7 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
           onLanguageChange={handleLanguageChange}
           onLoadSample={() => handleLoadSample(false)}
           onExport={handleExport}
+          onCopyContent={handleCopyContent}
           onChangeName={(name) => name.length > 0 && setName(name)}
           onChangeColor={() => setHue(generateHue())}
         />

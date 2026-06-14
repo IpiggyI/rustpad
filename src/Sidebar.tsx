@@ -2,6 +2,7 @@ import {
   Button,
   Container,
   Flex,
+  HStack,
   Heading,
   Input,
   InputGroup,
@@ -13,7 +14,7 @@ import {
   Text,
   useToast,
 } from "@chakra-ui/react";
-import { VscCloudDownload, VscRepo } from "react-icons/vsc";
+import { VscCloudDownload, VscCopy, VscRepo } from "react-icons/vsc";
 
 import ConnectionStatus from "./ConnectionStatus";
 import User from "./User";
@@ -26,7 +27,6 @@ export type SidebarProps = {
   darkMode: boolean;
   language: string;
   wordWrap: boolean;
-  blockMode: boolean;
   currentUser: UserInfo;
   users: Record<number, UserInfo>;
   onDarkModeChange: () => void;
@@ -35,6 +35,7 @@ export type SidebarProps = {
   onLanguageChange: (language: string) => void;
   onLoadSample: () => void;
   onExport: () => void;
+  onCopyContent: () => void;
   onChangeName: (name: string) => void;
   onChangeColor: () => void;
 };
@@ -45,7 +46,6 @@ function Sidebar({
   darkMode,
   language,
   wordWrap,
-  blockMode,
   currentUser,
   users,
   onDarkModeChange,
@@ -54,6 +54,7 @@ function Sidebar({
   onLanguageChange,
   onLoadSample,
   onExport,
+  onCopyContent,
   onChangeName,
   onChangeColor,
 }: SidebarProps) {
@@ -63,14 +64,24 @@ function Sidebar({
   const documentUrl = `${window.location.origin}/#${documentId}`;
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(documentUrl);
-    toast({
-      title: "Copied!",
-      description: "Link copied to clipboard",
-      status: "success",
-      duration: 2000,
-      isClosable: true,
-    });
+    try {
+      await navigator.clipboard.writeText(documentUrl);
+      toast({
+        title: "Copied!",
+        description: "Link copied to clipboard",
+        status: "success",
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch {
+      toast({
+        title: "Copy failed",
+        description: "Clipboard access was denied by the browser.",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+    }
   }
 
   return (
@@ -95,10 +106,16 @@ function Sidebar({
         <Switch isChecked={wordWrap} onChange={onWordWrapChange} />
       </Flex>
 
-      <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
-        <Heading size="sm">Block Mode</Heading>
-        <Switch isChecked={blockMode} onChange={onBlockModeChange} />
-      </Flex>
+      <Button
+        size="sm"
+        colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+        variant="outline"
+        mt={4}
+        w="full"
+        onClick={onBlockModeChange}
+      >
+        Open Block Workspace
+      </Button>
 
       <Heading mt={4} mb={1.5} size="sm">
         Language
@@ -143,19 +160,32 @@ function Sidebar({
         </InputRightElement>
       </InputGroup>
 
-      <Button
-        size="sm"
-        colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
-        borderColor={darkMode ? "blue.400" : "blue.600"}
-        color={darkMode ? "blue.400" : "blue.600"}
-        variant="outline"
-        leftIcon={<VscCloudDownload />}
-        mt={2}
-        w="full"
-        onClick={onExport}
-      >
-        Export file
-      </Button>
+      <HStack mt={2} spacing={2} w="full">
+        <Button
+          size="sm"
+          colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+          borderColor={darkMode ? "blue.400" : "blue.600"}
+          color={darkMode ? "blue.400" : "blue.600"}
+          variant="outline"
+          leftIcon={<VscCopy />}
+          flex={1}
+          onClick={onCopyContent}
+        >
+          Copy
+        </Button>
+        <Button
+          size="sm"
+          colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+          borderColor={darkMode ? "blue.400" : "blue.600"}
+          color={darkMode ? "blue.400" : "blue.600"}
+          variant="outline"
+          leftIcon={<VscCloudDownload />}
+          flex={1}
+          onClick={onExport}
+        >
+          Export
+        </Button>
+      </HStack>
 
       <Heading mt={4} mb={1.5} size="sm">
         Active Users

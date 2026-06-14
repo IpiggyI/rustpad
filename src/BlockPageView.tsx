@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef } from "react";
 import {
   VscAdd,
   VscCloudDownload,
+  VscCopy,
   VscLayoutSidebarLeft,
   VscLayoutSidebarLeftOff,
 } from "react-icons/vsc";
@@ -27,12 +28,8 @@ import useLocalStorageState from "use-local-storage-state";
 
 import BlockEditor from "./BlockEditor";
 import {
-  clearSingleToBlockTransfer,
-  formatBlockSnapshot,
   loadBlockSnapshot,
-  saveBlockToSingleTransfer,
   saveBlockSnapshot,
-  takeSingleToBlockTransfer,
 } from "./blockModeSync";
 import { Manifest, useManifest } from "./BlockManifest";
 import ConnectionStatus from "./ConnectionStatus";
@@ -53,10 +50,7 @@ function BlockPageView({
   onDarkModeChange: () => void;
 }) {
   const toast = useToast();
-  const initialBlockTransfer = useRef(takeSingleToBlockTransfer(id));
-  const initialSnapshot = useRef(
-    initialBlockTransfer.current?.snapshot ?? loadBlockSnapshot(id),
-  );
+  const initialSnapshot = useRef(loadBlockSnapshot(id));
   const initialManifest = useRef<Manifest | undefined>(
     initialSnapshot.current
       ? {
@@ -76,9 +70,7 @@ function BlockPageView({
     useManifest(id, {
       initialManifest: initialManifest.current,
     });
-  const liveBlockContents = useRef<Record<string, string>>({
-    ...initialContentByBlock.current,
-  });
+  const liveBlockContents = useRef<Record<string, string>>({});
 
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState(
     "sidebarCollapsed",
@@ -106,12 +98,6 @@ function BlockPageView({
   }, [id, manifest]);
 
   useEffect(() => {
-    if (!initialBlockTransfer.current) return;
-    const clearId = window.setTimeout(() => clearSingleToBlockTransfer(id), 0);
-    return () => window.clearTimeout(clearId);
-  }, [id]);
-
-  useEffect(() => {
     saveCurrentSnapshot();
   }, [id, manifest]);
 
@@ -127,79 +113,152 @@ function BlockPageView({
     return snapshot;
   }
 
-  function handleBlockModeChange() {
-    const snapshot = saveCurrentSnapshot();
-    saveBlockToSingleTransfer(id, {
-      content: formatBlockSnapshot(snapshot),
-      language:
-        initialBlockTransfer.current?.documentLanguage ??
-        snapshot.blocks[0]?.language ??
-        "plaintext",
+  function resolveBlockContent(blockId: string, blockTitle: string): Promise<string> {
+    const live = liveBlockContents.current[blockId];
+    if (live !== undefined) return Promise.resolve(live);
+
+    return new Promise<string>((resolve, reject) => {
+      let finished = false;
+      const docId = `page:${id}:block:${blockId}`;
+      const headless = new RustpadHeadless({
+        uri: getWsUri(docId),
+        onContentReady: (content) => finish(content),
+        onDesynchronized: () => fallback(),
+      });
+      const timeoutId = window.setTimeout(() => fallback(), exportTimeoutMs);
+
+      function finish(content: string) {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timeoutId);
+        headless.dispose();
+        resolve(content);
+      }
+
+      function fallback() {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timeoutId);
+        headless.dispose();
+        const cached = initialContentByBlock.current[blockId];
+        if (cached !== undefined) {
+          resolve(cached);
+        } else {
+          reject(new Error(`Failed to read block: ${blockTitle}`));
+        }
+      }
     });
+  }
+
+  function handleBlockModeChange() {
+    saveCurrentSnapshot();
     window.location.hash = id;
   }
 
   const documentUrl = `${window.location.origin}/#page:${id}`;
 
-  async function handleCopy() {
-    await navigator.clipboard.writeText(documentUrl);
-    toast({
-      title: "Copied!",
-      description: "Link copied to clipboard",
-      status: "success",
-      duration: 2000,
-      isClosable: true,
-    });
+  async function handleCopyLink() {
+    try {
+      await navigator.clipboard.writeText(documentUrl);
+      toast({
+        title: "Copied!",
+        description: "Link copied to clipboard",
+        status: "success",
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch {
+      toast({
+        title: "Copy failed",
+        description: "Clipboard access was denied by the browser.",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+    }
   }
 
-  async function handleExport() {
+  async function handleCopyAll() {
     if (manifest.blocks.length === 0) return;
-
     try {
-      const entries = await Promise.all(
-        manifest.blocks.map(
-          (block) =>
-            new Promise<[string, string]>((resolve, reject) => {
-              const liveContent = liveBlockContents.current[block.id];
-              if (liveContent !== undefined) {
-                resolve([block.id, liveContent]);
-                return;
-              }
-
-              let finished = false;
-              const docId = `page:${id}:block:${block.id}`;
-              const headless = new RustpadHeadless({
-                uri: getWsUri(docId),
-                onContentReady: (content) => finish(content),
-                onDesynchronized: () => rejectOnce(),
-              });
-              const timeoutId = window.setTimeout(() => rejectOnce(), exportTimeoutMs);
-
-              function finish(content: string) {
-                if (finished) return;
-                finished = true;
-                window.clearTimeout(timeoutId);
-                headless.dispose();
-                resolve([block.id, content]);
-              }
-
-              function rejectOnce() {
-                if (finished) return;
-                finished = true;
-                window.clearTimeout(timeoutId);
-                headless.dispose();
-                reject(new Error(`Failed to read block: ${block.title}`));
-              }
-            }),
-        ),
+      const contents = await Promise.all(
+        manifest.blocks.map((b) => resolveBlockContent(b.id, b.title)),
       );
-      const contents = Object.fromEntries(entries);
+      await navigator.clipboard.writeText(contents.join("\n\n"));
+      toast({
+        title: "Copied!",
+        description: "All blocks copied to clipboard",
+        status: "success",
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch (error) {
+      toast({
+        title: "Copy failed",
+        description: error instanceof Error ? error.message : "Could not read block contents.",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+    }
+  }
+
+  async function handleCopyBlock(blockId: string, blockTitle: string) {
+    try {
+      const content = await resolveBlockContent(blockId, blockTitle);
+      await navigator.clipboard.writeText(content);
+      toast({
+        title: "Copied!",
+        description: `"${blockTitle}" copied to clipboard`,
+        status: "success",
+        duration: 2000,
+        isClosable: true,
+      });
+    } catch (error) {
+      toast({
+        title: "Copy failed",
+        description: error instanceof Error ? error.message : "Could not read block content.",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+    }
+  }
+
+  async function handleExportBlock(blockId: string, blockTitle: string, language: string) {
+    try {
+      const content = await resolveBlockContent(blockId, blockTitle);
+      const ext = languageExtensions[language] ?? ".txt";
+      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${blockTitle}${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast({
+        title: "Export failed",
+        description: error instanceof Error ? error.message : "Could not read block content.",
+        status: "error",
+        duration: 3000,
+        isClosable: true,
+      });
+    }
+  }
+
+  async function handleExportAll() {
+    if (manifest.blocks.length === 0) return;
+    try {
+      const contents = await Promise.all(
+        manifest.blocks.map((b) => resolveBlockContent(b.id, b.title)),
+      );
       const parts: string[] = [];
-      for (const block of manifest.blocks) {
+      manifest.blocks.forEach((block, i) => {
         parts.push(`// === ${block.title} (${block.language}) ===`);
-        parts.push(contents[block.id] ?? "");
+        parts.push(contents[i]);
         parts.push("");
-      }
+      });
       const merged = parts.join("\n");
       const primaryLang = manifest.blocks[0]?.language ?? "plaintext";
       const ext = languageExtensions[primaryLang] ?? ".txt";
@@ -255,10 +314,16 @@ function BlockPageView({
             />
           </Flex>
 
-          <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
-            <Heading size="sm">Block Mode</Heading>
-            <Switch isChecked onChange={handleBlockModeChange} />
-          </Flex>
+          <Button
+            size="sm"
+            colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+            variant="outline"
+            mt={4}
+            w="full"
+            onClick={handleBlockModeChange}
+          >
+            Back to Document
+          </Button>
 
           <Heading mt={4} mb={1.5} size="sm">
             Share Link
@@ -276,7 +341,7 @@ function BlockPageView({
               <Button
                 h="1.4rem"
                 size="xs"
-                onClick={handleCopy}
+                onClick={handleCopyLink}
                 _hover={{ bg: darkMode ? "#575759" : "gray.200" }}
                 bgColor={darkMode ? "#575759" : "gray.200"}
                 color={darkMode ? "white" : "inherit"}
@@ -286,19 +351,32 @@ function BlockPageView({
             </InputRightElement>
           </InputGroup>
 
-          <Button
-            size="sm"
-            colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
-            borderColor={darkMode ? "blue.400" : "blue.600"}
-            color={darkMode ? "blue.400" : "blue.600"}
-            variant="outline"
-            leftIcon={<VscCloudDownload />}
-            mt={2}
-            w="full"
-            onClick={handleExport}
-          >
-            Export all blocks
-          </Button>
+          <HStack mt={2} spacing={2} w="full">
+            <Button
+              size="sm"
+              colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+              borderColor={darkMode ? "blue.400" : "blue.600"}
+              color={darkMode ? "blue.400" : "blue.600"}
+              variant="outline"
+              leftIcon={<VscCopy />}
+              flex={1}
+              onClick={handleCopyAll}
+            >
+              Copy
+            </Button>
+            <Button
+              size="sm"
+              colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+              borderColor={darkMode ? "blue.400" : "blue.600"}
+              color={darkMode ? "blue.400" : "blue.600"}
+              variant="outline"
+              leftIcon={<VscCloudDownload />}
+              flex={1}
+              onClick={handleExportAll}
+            >
+              Export
+            </Button>
+          </HStack>
 
           <Heading mt={4} mb={1.5} size="sm">
             Blocks
@@ -380,6 +458,12 @@ function BlockPageView({
                 }}
                 onContentChange={(content) =>
                   rememberBlockContent(block.id, content)
+                }
+                onCopyBlock={() =>
+                  handleCopyBlock(block.id, block.title)
+                }
+                onExportBlock={() =>
+                  handleExportBlock(block.id, block.title, block.language)
                 }
               />
             ))}
