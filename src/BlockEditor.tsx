@@ -10,7 +10,7 @@ import {
 } from "@chakra-ui/react";
 import Editor from "@monaco-editor/react";
 import { editor } from "monaco-editor/esm/vs/editor/editor.api";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   VscChevronDown,
   VscChevronRight,
@@ -52,6 +52,10 @@ function BlockEditor({
   const storageKey = `block-collapsed:${pageId}:${block.id}`;
   const [collapsed, setCollapsed] = useLocalStorageState(storageKey, {
     defaultValue: false,
+  });
+  const heightKey = `block-height:${pageId}:${block.id}`;
+  const [height, setHeight] = useLocalStorageState(heightKey, {
+    defaultValue: 300,
   });
   const [connection, setConnection] = useState<
     "connected" | "disconnected" | "desynchronized"
@@ -103,6 +107,30 @@ function BlockEditor({
       onContentChange(editorInstance.getValue());
     }).dispose;
   }, [editorInstance, onContentChange]);
+
+  const startResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startHeight = height;
+      document.body.style.userSelect = "none";
+      function onMove(ev: MouseEvent) {
+        const next = Math.min(
+          1200,
+          Math.max(120, startHeight + ev.clientY - startY),
+        );
+        setHeight(next);
+      }
+      function onUp() {
+        document.body.style.userSelect = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [height, setHeight],
+  );
 
   const connectionColor = {
     connected: "green.500",
@@ -198,17 +226,29 @@ function BlockEditor({
       </Flex>
 
       {!collapsed && (
-        <Box h="300px">
-          <Editor
-            theme={darkMode ? "vs-dark" : "vs"}
-            language={block.language}
-            options={{
-              automaticLayout: true,
-              fontSize: 13,
-            }}
-            onMount={(ed) => setEditorInstance(ed)}
+        <>
+          <Box h={`${height}px`}>
+            <Editor
+              theme={darkMode ? "vs-dark" : "vs"}
+              language={block.language}
+              options={{
+                automaticLayout: true,
+                fontSize: 13,
+              }}
+              onMount={(ed) => setEditorInstance(ed)}
+            />
+          </Box>
+          <Box
+            h="6px"
+            cursor="ns-resize"
+            bgColor={darkMode ? "#2d2d2d" : "#f0f0f0"}
+            borderTop="1px solid"
+            borderColor={darkMode ? "#444" : "#ddd"}
+            _hover={{ bgColor: darkMode ? "#3a3a3a" : "#e2e2e2" }}
+            onMouseDown={startResize}
+            title="Drag to resize"
           />
-        </Box>
+        </>
       )}
     </Box>
   );

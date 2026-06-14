@@ -70,7 +70,10 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
       model.setEOL(0); // LF
       const blockTransfer = takeBlockToSingleTransfer(id);
       if (blockTransfer) {
-        model.setValue(blockTransfer.content);
+        // Don't pre-fill the model before connecting: let the server History
+        // sync the real document into the model first, then onReady injects the
+        // block content as a proper edit (correct OT base length). Pre-filling
+        // here desyncs `lastValue` from the server and gets the socket closed.
         setLanguage(blockTransfer.language);
         window.setTimeout(() => clearBlockToSingleTransfer(id), 0);
       }
