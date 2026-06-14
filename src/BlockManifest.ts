@@ -137,8 +137,8 @@ export function useManifest(
       updateManifest((prev) => ({
         ...prev,
         blocks: [
-          ...prev.blocks,
           { id: generateBlockId(), title: "Untitled", language },
+          ...prev.blocks,
         ],
       }));
     },

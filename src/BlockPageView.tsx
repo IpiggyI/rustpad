@@ -439,6 +439,18 @@ function BlockPageView({
 
         <Box flex={1} overflowY="auto" px={4} py={2}>
           <VStack spacing={3} align="stretch">
+            <Button
+              leftIcon={<VscAdd />}
+              size="sm"
+              variant="outline"
+              colorScheme={darkMode ? "whiteAlpha" : "gray"}
+              onClick={() => {
+                addBlock();
+              }}
+            >
+              Add Block
+            </Button>
+
             {manifest.blocks.map((block) => (
               <BlockEditor
                 key={block.id}
@@ -467,18 +479,6 @@ function BlockPageView({
                 }
               />
             ))}
-
-            <Button
-              leftIcon={<VscAdd />}
-              size="sm"
-              variant="outline"
-              colorScheme={darkMode ? "whiteAlpha" : "gray"}
-              onClick={() => {
-                addBlock();
-              }}
-            >
-              Add Block
-            </Button>
           </VStack>
         </Box>
       </Flex>
