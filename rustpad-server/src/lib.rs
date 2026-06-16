@@ -214,18 +214,18 @@ const PERSIST_INTERVAL_JITTER: Duration = Duration::from_secs(1);
 
 /// Persists changed documents after a fixed time interval.
 async fn persister(id: String, rustpad: Arc<Rustpad>, db: Database) {
-    let mut last_revision = 0;
+    let mut last_persist_version = 0;
     while !rustpad.killed() {
         let interval = PERSIST_INTERVAL
             + rand::thread_rng().gen_range(Duration::ZERO..=PERSIST_INTERVAL_JITTER);
         time::sleep(interval).await;
-        let revision = rustpad.revision();
-        if revision > last_revision {
-            info!("persisting revision {} for id = {}", revision, id);
+        let persist_version = rustpad.persist_version();
+        if persist_version > last_persist_version {
+            info!("persisting version {} for id = {}", persist_version, id);
             if let Err(e) = db.store(&id, &rustpad.snapshot()).await {
                 error!("when persisting document {}: {}", id, e);
             } else {
-                last_revision = revision;
+                last_persist_version = persist_version;
             }
         }
     }

@@ -38,6 +38,7 @@ async fn test_database() -> Result<()> {
     let doc1 = PersistedDocument {
         text: "Hello Text".into(),
         language: None,
+        title: None,
     };
 
     assert!(database.store("hello", &doc1).await.is_ok());
@@ -47,6 +48,7 @@ async fn test_database() -> Result<()> {
     let doc2 = PersistedDocument {
         text: "print('World Text :)')".into(),
         language: Some("python".into()),
+        title: Some("World".into()),
     };
 
     assert!(database.store("world", &doc2).await.is_ok());
@@ -101,6 +103,42 @@ async fn test_persist() -> Result<()> {
 
     time::advance(3 * hour).await;
     expect_text(&filter, "persist", "hello").await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_persist_metadata() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+
+    let database = Database::new(&temp_sqlite_uri()?).await?;
+    let filter = server(ServerConfig {
+        expiry_days: 2,
+        database: Some(database.clone()),
+    });
+
+    let mut client = connect(&filter, "metadata").await?;
+    let msg = client.recv().await?;
+    assert_eq!(msg, json!({ "Identity": 0 }));
+
+    client.send(&json!({ "SetTitle": "Project notes" })).await;
+    let msg = client.recv().await?;
+    assert_eq!(msg, json!({ "Title": "Project notes" }));
+
+    client.send(&json!({ "SetLanguage": "markdown" })).await;
+    let msg = client.recv().await?;
+    assert_eq!(msg, json!({ "Language": "markdown" }));
+
+    time::pause();
+    time::advance(Duration::from_secs(5)).await;
+
+    time::resume();
+    time::sleep(Duration::from_millis(150)).await;
+
+    let document = database.load("metadata").await?;
+    assert_eq!(document.text, "");
+    assert_eq!(document.language.as_deref(), Some("markdown"));
+    assert_eq!(document.title.as_deref(), Some("Project notes"));
 
     Ok(())
 }

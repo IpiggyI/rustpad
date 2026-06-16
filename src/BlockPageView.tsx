@@ -27,14 +27,11 @@ import {
 import useLocalStorageState from "use-local-storage-state";
 
 import BlockEditor from "./BlockEditor";
-import {
-  loadBlockSnapshot,
-  saveBlockSnapshot,
-} from "./blockModeSync";
 import { Manifest, useManifest } from "./BlockManifest";
 import ConnectionStatus from "./ConnectionStatus";
-import languageExtensions from "./extensions";
 import Footer from "./Footer";
+import { loadBlockSnapshot, saveBlockSnapshot } from "./blockModeSync";
+import languageExtensions from "./extensions";
 import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
 
@@ -55,21 +52,33 @@ function BlockPageView({
     initialSnapshot.current
       ? {
           version: initialSnapshot.current.version,
-          blocks: initialSnapshot.current.blocks.map(({ content, ...block }) => block),
+          blocks: initialSnapshot.current.blocks.map(
+            ({ content, ...block }) => block,
+          ),
         }
       : undefined,
   );
   const initialContentByBlock = useRef<Record<string, string>>(
     initialSnapshot.current
       ? Object.fromEntries(
-          initialSnapshot.current.blocks.map((block) => [block.id, block.content]),
+          initialSnapshot.current.blocks.map((block) => [
+            block.id,
+            block.content,
+          ]),
         )
       : {},
   );
-  const { manifest, connection, addBlock, removeBlock, updateBlock, moveBlock } =
-    useManifest(id, {
-      initialManifest: initialManifest.current,
-    });
+  const {
+    manifest,
+    connection,
+    addBlock,
+    updateTitle,
+    removeBlock,
+    updateBlock,
+    moveBlock,
+  } = useManifest(id, {
+    initialManifest: initialManifest.current,
+  });
   const liveBlockContents = useRef<Record<string, string>>({});
 
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState(
@@ -79,23 +88,49 @@ function BlockPageView({
   const [wordWrap, setWordWrap] = useLocalStorageState("wordWrap", {
     defaultValue: false,
   });
+  const [documentTitle, setDocumentTitle] = useLocalStorageState(
+    `documentTitle:page:${id}`,
+    { defaultValue: "" },
+  );
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev);
   }, [setSidebarCollapsed]);
 
-  const rememberBlockContent = useCallback((blockId: string, content: string) => {
-    liveBlockContents.current[blockId] = content;
-    const nextContents = { ...liveBlockContents.current, [blockId]: content };
-    saveBlockSnapshot(id, {
-      version: manifest.version,
-      blocks: manifest.blocks.map((block) => ({
-        ...block,
-        content:
-          nextContents[block.id] ?? initialContentByBlock.current[block.id] ?? "",
-      })),
-    });
-  }, [id, manifest]);
+  // Update browser tab title
+  useEffect(() => {
+    const title = manifest.title ?? documentTitle;
+    document.title = title ? `${title} - Rustpad` : "Rustpad";
+  }, [documentTitle, manifest.title]);
+
+  useEffect(() => {
+    if (manifest.title !== undefined) {
+      setDocumentTitle(manifest.title);
+    }
+  }, [manifest.title, setDocumentTitle]);
+
+  function handleDocumentTitleChange(title: string) {
+    setDocumentTitle(title);
+    updateTitle(title);
+  }
+
+  const rememberBlockContent = useCallback(
+    (blockId: string, content: string) => {
+      liveBlockContents.current[blockId] = content;
+      const nextContents = { ...liveBlockContents.current, [blockId]: content };
+      saveBlockSnapshot(id, {
+        version: manifest.version,
+        blocks: manifest.blocks.map((block) => ({
+          ...block,
+          content:
+            nextContents[block.id] ??
+            initialContentByBlock.current[block.id] ??
+            "",
+        })),
+      });
+    },
+    [id, manifest],
+  );
 
   useEffect(() => {
     saveCurrentSnapshot();
@@ -106,14 +141,20 @@ function BlockPageView({
       version: manifest.version,
       blocks: manifest.blocks.map((block) => ({
         ...block,
-        content: nextContents[block.id] ?? initialContentByBlock.current[block.id] ?? "",
+        content:
+          nextContents[block.id] ??
+          initialContentByBlock.current[block.id] ??
+          "",
       })),
     };
     saveBlockSnapshot(id, snapshot);
     return snapshot;
   }
 
-  function resolveBlockContent(blockId: string, blockTitle: string): Promise<string> {
+  function resolveBlockContent(
+    blockId: string,
+    blockTitle: string,
+  ): Promise<string> {
     const live = liveBlockContents.current[blockId];
     if (live !== undefined) return Promise.resolve(live);
 
@@ -195,7 +236,10 @@ function BlockPageView({
     } catch (error) {
       toast({
         title: "Copy failed",
-        description: error instanceof Error ? error.message : "Could not read block contents.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not read block contents.",
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -217,7 +261,10 @@ function BlockPageView({
     } catch (error) {
       toast({
         title: "Copy failed",
-        description: error instanceof Error ? error.message : "Could not read block content.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not read block content.",
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -225,7 +272,11 @@ function BlockPageView({
     }
   }
 
-  async function handleExportBlock(blockId: string, blockTitle: string, language: string) {
+  async function handleExportBlock(
+    blockId: string,
+    blockTitle: string,
+    language: string,
+  ) {
     try {
       const content = await resolveBlockContent(blockId, blockTitle);
       const ext = languageExtensions[language] ?? ".txt";
@@ -239,7 +290,10 @@ function BlockPageView({
     } catch (error) {
       toast({
         title: "Export failed",
-        description: error instanceof Error ? error.message : "Could not read block content.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not read block content.",
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -279,7 +333,10 @@ function BlockPageView({
     } catch (error) {
       toast({
         title: "Export failed",
-        description: error instanceof Error ? error.message : "Could not read block contents.",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not read block contents.",
         status: "error",
         duration: 3000,
         isClosable: true,
@@ -324,6 +381,18 @@ function BlockPageView({
           >
             Back to Document
           </Button>
+
+          <Heading mt={4} mb={1.5} size="sm">
+            Document Title
+          </Heading>
+          <Input
+            size="sm"
+            placeholder={id}
+            bgColor={darkMode ? "#3c3c3c" : "white"}
+            borderColor={darkMode ? "#3c3c3c" : "white"}
+            value={documentTitle}
+            onChange={(e) => handleDocumentTitleChange(e.target.value)}
+          />
 
           <Heading mt={4} mb={1.5} size="sm">
             Share Link
@@ -471,9 +540,7 @@ function BlockPageView({
                 onContentChange={(content) =>
                   rememberBlockContent(block.id, content)
                 }
-                onCopyBlock={() =>
-                  handleCopyBlock(block.id, block.title)
-                }
+                onCopyBlock={() => handleCopyBlock(block.id, block.title)}
                 onExportBlock={() =>
                   handleExportBlock(block.id, block.title, block.language)
                 }

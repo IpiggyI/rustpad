@@ -1,4 +1,12 @@
-import { Box, Flex, HStack, Icon, IconButton, Text, useToast } from "@chakra-ui/react";
+import {
+  Box,
+  Flex,
+  HStack,
+  Icon,
+  IconButton,
+  Text,
+  useToast,
+} from "@chakra-ui/react";
 import Editor from "@monaco-editor/react";
 import { editor } from "monaco-editor/esm/vs/editor/editor.api";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -12,10 +20,10 @@ import {
 import useLocalStorageState from "use-local-storage-state";
 
 import rustpadRaw from "../rustpad-server/src/rustpad.rs?raw";
-import languageExtensions from "./extensions";
 import ReadCodeConfirm from "./ReadCodeConfirm";
 import Sidebar from "./Sidebar";
 import animals from "./animals.json";
+import languageExtensions from "./extensions";
 import languages from "./languages.json";
 import Rustpad, { UserInfo } from "./rustpad";
 import { getWsUri } from "./useHash";
@@ -28,7 +36,11 @@ function generateHue() {
   return Math.floor(Math.random() * 360);
 }
 
-function SingleDocView({ id, darkMode, onDarkModeChange }: {
+function SingleDocView({
+  id,
+  darkMode,
+  onDarkModeChange,
+}: {
   id: string;
   darkMode: boolean;
   onDarkModeChange: () => void;
@@ -53,9 +65,19 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
   const [wordWrap, setWordWrap] = useLocalStorageState("wordWrap", {
     defaultValue: false,
   });
+  const [documentTitle, setDocumentTitle] = useLocalStorageState(
+    `documentTitle:${id}`,
+    { defaultValue: "" },
+  );
   const rustpad = useRef<Rustpad>();
+  const pendingDocumentTitle = useRef<string>();
 
   const [readCodeConfirmOpen, setReadCodeConfirmOpen] = useState(false);
+
+  // Update browser tab title
+  useEffect(() => {
+    document.title = documentTitle ? `${documentTitle} - Rustpad` : "Rustpad";
+  }, [documentTitle]);
 
   useEffect(() => {
     if (editor?.getModel()) {
@@ -83,8 +105,17 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
             setLanguage(language);
           }
         },
+        onChangeTitle: (title) => {
+          if (pendingDocumentTitle.current === title) {
+            pendingDocumentTitle.current = undefined;
+          }
+          setDocumentTitle(title);
+        },
         onChangeUsers: setUsers,
       });
+      if (pendingDocumentTitle.current !== undefined) {
+        rustpad.current.setTitle(pendingDocumentTitle.current);
+      }
       return () => {
         rustpad.current?.dispose();
         rustpad.current = undefined;
@@ -178,6 +209,15 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
     }
   }
 
+  function handleDocumentTitleChange(title: string) {
+    setDocumentTitle(title);
+    if (rustpad.current?.setTitle(title)) {
+      pendingDocumentTitle.current = undefined;
+    } else {
+      pendingDocumentTitle.current = title;
+    }
+  }
+
   function handleLoadSample(confirmed: boolean) {
     if (editor?.getModel()) {
       const model = editor.getModel()!;
@@ -209,6 +249,7 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
           darkMode={darkMode}
           language={language}
           wordWrap={wordWrap}
+          documentTitle={documentTitle}
           currentUser={{ name, hue }}
           users={users}
           onDarkModeChange={onDarkModeChange}
@@ -220,6 +261,7 @@ function SingleDocView({ id, darkMode, onDarkModeChange }: {
           onCopyContent={handleCopyContent}
           onChangeName={(name) => name.length > 0 && setName(name)}
           onChangeColor={() => setHue(generateHue())}
+          onChangeDocumentTitle={handleDocumentTitleChange}
         />
       )}
       <ReadCodeConfirm

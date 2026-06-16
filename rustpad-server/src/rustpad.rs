@@ -34,6 +34,8 @@ struct State {
     operations: Vec<UserOperation>,
     text: String,
     language: Option<String>,
+    persist_version: u64,
+    title: Option<String>,
     users: HashMap<u64, UserInfo>,
     cursors: HashMap<u64, CursorData>,
 }
@@ -66,6 +68,8 @@ enum ClientMsg {
     },
     /// Sets the language of the editor.
     SetLanguage(String),
+    /// Sets the human-readable document title.
+    SetTitle(String),
     /// Sets the user's current information.
     ClientInfo(UserInfo),
     /// Sets the user's cursor and selection positions.
@@ -84,6 +88,8 @@ enum ServerMsg {
     },
     /// Broadcasts the current language, last writer wins.
     Language(String),
+    /// Broadcasts the current document title, last writer wins.
+    Title(String),
     /// Broadcasts a user's information, or `None` on disconnect.
     UserInfo { id: u64, info: Option<UserInfo> },
     /// Broadcasts a user's cursor position.
@@ -120,6 +126,7 @@ impl From<PersistedDocument> for Rustpad {
             let mut state = rustpad.state.write();
             state.text = document.text;
             state.language = document.language;
+            state.title = document.title;
             state.operations.push(UserOperation {
                 id: u64::MAX,
                 operation,
@@ -157,6 +164,7 @@ impl Rustpad {
         PersistedDocument {
             text: state.text.clone(),
             language: state.language.clone(),
+            title: state.title.clone(),
         }
     }
 
@@ -164,6 +172,12 @@ impl Rustpad {
     pub fn revision(&self) -> usize {
         let state = self.state.read();
         state.operations.len()
+    }
+
+    /// Returns the current persistence version.
+    pub fn persist_version(&self) -> u64 {
+        let state = self.state.read();
+        state.persist_version
     }
 
     /// Kill this object immediately, dropping all current connections.
@@ -227,6 +241,9 @@ impl Rustpad {
             if let Some(language) = &state.language {
                 messages.push(ServerMsg::Language(language.clone()));
             }
+            if let Some(title) = &state.title {
+                messages.push(ServerMsg::Title(title.clone()));
+            }
             for (&id, info) in &state.users {
                 messages.push(ServerMsg::UserInfo {
                     id,
@@ -280,8 +297,16 @@ impl Rustpad {
                 self.notify.notify_waiters();
             }
             ClientMsg::SetLanguage(language) => {
-                self.state.write().language = Some(language.clone());
+                let mut state = self.state.write();
+                state.language = Some(language.clone());
+                state.persist_version += 1;
                 self.update.send(ServerMsg::Language(language)).ok();
+            }
+            ClientMsg::SetTitle(title) => {
+                let mut state = self.state.write();
+                state.title = Some(title.clone());
+                state.persist_version += 1;
+                self.update.send(ServerMsg::Title(title)).ok();
             }
             ClientMsg::ClientInfo(info) => {
                 self.state.write().users.insert(id, info.clone());
@@ -335,6 +360,7 @@ impl Rustpad {
         }
         state.operations.push(UserOperation { id, operation });
         state.text = new_text;
+        state.persist_version += 1;
         Ok(())
     }
 }

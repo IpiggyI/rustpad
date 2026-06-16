@@ -11,6 +11,7 @@ export type BlockInfo = {
 
 export type Manifest = {
   version: number;
+  title?: string;
   blocks: BlockInfo[];
 };
 
@@ -59,15 +60,14 @@ export function useManifest(
   );
   const [manifest, setManifest] = useState<Manifest>({
     version: 1,
+    title: fallbackManifest.current.title,
     blocks: fallbackManifest.current.blocks,
   });
   const [connection, setConnection] = useState<
     "connected" | "disconnected" | "desynchronized"
   >("disconnected");
   const headlessRef = useRef<RustpadHeadless>();
-  const lastValidManifest = useRef<Manifest>(
-    fallbackManifest.current,
-  );
+  const lastValidManifest = useRef<Manifest>(fallbackManifest.current);
   const initialized = useRef(false);
   const initialBlockRef = useRef(options.initialBlock);
   const initialManifestRef = useRef(options.initialManifest);
@@ -88,7 +88,8 @@ export function useManifest(
       // Server has no usable manifest (empty text, corrupt JSON, or zero blocks):
       // seed it once from the local initial / fallback manifest.
       if (!initialized.current) {
-        const init: Manifest = initialManifestRef.current ?? fallbackManifest.current;
+        const init: Manifest =
+          initialManifestRef.current ?? fallbackManifest.current;
         initialized.current = true;
         lastValidManifest.current = init;
         setManifest(init);
@@ -99,7 +100,9 @@ export function useManifest(
             const blockHeadless = new RustpadHeadless({
               uri: getWsUri(`page:${pageId}:block:${block.id}`),
               onContentReady: () => {
-                blockHeadless.replaceContent(initialBlockRef.current?.content ?? "");
+                blockHeadless.replaceContent(
+                  initialBlockRef.current?.content ?? "",
+                );
                 window.setTimeout(() => blockHeadless.dispose(), 100);
               },
             });
@@ -125,12 +128,15 @@ export function useManifest(
     };
   }, [pageId]);
 
-  const updateManifest = useCallback((updater: (prev: Manifest) => Manifest) => {
-    const next = updater(lastValidManifest.current);
-    lastValidManifest.current = next;
-    setManifest(next);
-    headlessRef.current?.replaceContent(serializeManifest(next));
-  }, []);
+  const updateManifest = useCallback(
+    (updater: (prev: Manifest) => Manifest) => {
+      const next = updater(lastValidManifest.current);
+      lastValidManifest.current = next;
+      setManifest(next);
+      headlessRef.current?.replaceContent(serializeManifest(next));
+    },
+    [],
+  );
 
   const addBlock = useCallback(
     (language: string = "plaintext") => {
@@ -140,6 +146,16 @@ export function useManifest(
           { id: generateBlockId(), title: "Untitled", language },
           ...prev.blocks,
         ],
+      }));
+    },
+    [updateManifest],
+  );
+
+  const updateTitle = useCallback(
+    (title: string) => {
+      updateManifest((prev) => ({
+        ...prev,
+        title,
       }));
     },
     [updateManifest],
@@ -156,7 +172,10 @@ export function useManifest(
   );
 
   const updateBlock = useCallback(
-    (blockId: string, patch: Partial<Pick<BlockInfo, "title" | "language">>) => {
+    (
+      blockId: string,
+      patch: Partial<Pick<BlockInfo, "title" | "language">>,
+    ) => {
       updateManifest((prev) => ({
         ...prev,
         blocks: prev.blocks.map((b) =>
@@ -186,6 +205,7 @@ export function useManifest(
     manifest,
     connection,
     addBlock,
+    updateTitle,
     removeBlock,
     updateBlock,
     moveBlock,

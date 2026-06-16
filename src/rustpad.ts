@@ -15,6 +15,7 @@ export type RustpadOptions = {
   readonly onDisconnected?: () => void;
   readonly onDesynchronized?: () => void;
   readonly onChangeLanguage?: (language: string) => void;
+  readonly onChangeTitle?: (title: string) => void;
   readonly onChangeUsers?: (users: Record<number, UserInfo>) => void;
   readonly reconnectInterval?: number;
 };
@@ -48,6 +49,7 @@ class Rustpad {
   private users: Record<number, UserInfo> = {};
   private userCursors: Record<number, CursorData> = {};
   private myInfo?: UserInfo;
+  private pendingTitle?: string;
   private cursorData: CursorData = { cursors: [], selections: [] };
 
   // Intermittent local editor state
@@ -109,6 +111,13 @@ class Rustpad {
     return this.ws !== undefined;
   }
 
+  /** Try to set the title of the document, if connected. */
+  setTitle(title: string): boolean {
+    this.pendingTitle = title;
+    this.sendPendingTitle();
+    return this.ws !== undefined;
+  }
+
   /** Set the user's information. */
   setInfo(info: UserInfo) {
     this.myInfo = info;
@@ -137,6 +146,7 @@ class Rustpad {
       this.users = {};
       this.options.onChangeUsers?.(this.users);
       this.sendInfo();
+      this.sendPendingTitle();
       this.sendCursorData();
       if (this.outstanding) {
         this.sendOperation(this.outstanding);
@@ -191,6 +201,11 @@ class Rustpad {
       this.markReady();
     } else if (msg.Language !== undefined) {
       this.options.onChangeLanguage?.(msg.Language);
+    } else if (msg.Title !== undefined) {
+      if (this.pendingTitle === msg.Title) {
+        this.pendingTitle = undefined;
+      }
+      this.options.onChangeTitle?.(msg.Title);
     } else if (msg.UserInfo !== undefined) {
       const { id, info } = msg.UserInfo;
       if (id !== this.me) {
@@ -266,6 +281,12 @@ class Rustpad {
   private sendInfo() {
     if (this.myInfo) {
       this.ws?.send(`{"ClientInfo":${JSON.stringify(this.myInfo)}}`);
+    }
+  }
+
+  private sendPendingTitle() {
+    if (this.pendingTitle !== undefined) {
+      this.ws?.send(`{"SetTitle":${JSON.stringify(this.pendingTitle)}}`);
     }
   }
 
@@ -464,6 +485,7 @@ type ServerMsg = {
     operations: UserOperation[];
   };
   Language?: string;
+  Title?: string;
   UserInfo?: {
     id: number;
     info: UserInfo | null;

@@ -12,6 +12,8 @@ pub struct PersistedDocument {
     pub text: String,
     /// Language of the document for editor syntax highlighting.
     pub language: Option<String>,
+    /// Human-readable document title.
+    pub title: Option<String>,
 }
 
 /// A driver for database operations wrapping a pool connection.
@@ -38,7 +40,7 @@ impl Database {
 
     /// Load the text of a document from the database.
     pub async fn load(&self, document_id: &str) -> Result<PersistedDocument> {
-        sqlx::query_as(r#"SELECT text, language FROM document WHERE id = $1"#)
+        sqlx::query_as(r#"SELECT text, language, title FROM document WHERE id = $1"#)
             .bind(document_id)
             .fetch_one(&self.pool)
             .await
@@ -50,16 +52,18 @@ impl Database {
         let result = sqlx::query(
             r#"
 INSERT INTO
-    document (id, text, language)
+    document (id, text, language, title)
 VALUES
-    ($1, $2, $3)
+    ($1, $2, $3, $4)
 ON CONFLICT(id) DO UPDATE SET
     text = excluded.text,
-    language = excluded.language"#,
+    language = excluded.language,
+    title = excluded.title"#,
         )
         .bind(document_id)
         .bind(&document.text)
         .bind(&document.language)
+        .bind(&document.title)
         .execute(&self.pool)
         .await?;
         if result.rows_affected() != 1 {

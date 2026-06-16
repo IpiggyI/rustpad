@@ -228,3 +228,36 @@ async fn test_set_language() -> Result<()> {
     expect_text(&filter, "foobar", "").await;
     Ok(())
 }
+
+#[tokio::test]
+async fn test_set_title() -> Result<()> {
+    pretty_env_logger::try_init().ok();
+    let filter = server(ServerConfig::default());
+
+    let mut client = connect(&filter, "foobar").await?;
+    let msg = client.recv().await?;
+    assert_eq!(msg, json!({ "Identity": 0 }));
+
+    let msg = json!({ "SetTitle": "Work notes" });
+    client.send(&msg).await;
+
+    let msg = client.recv().await?;
+    assert_eq!(msg, json!({ "Title": "Work notes" }));
+
+    let mut client2 = connect(&filter, "foobar").await?;
+    let msg = client2.recv().await?;
+    assert_eq!(msg, json!({ "Identity": 1 }));
+    let msg = client2.recv().await?;
+    assert_eq!(msg, json!({ "Title": "Work notes" }));
+
+    let msg = json!({ "SetTitle": "TODO List" });
+    client2.send(&msg).await;
+
+    let msg = client.recv().await?;
+    assert_eq!(msg, json!({ "Title": "TODO List" }));
+    let msg = client2.recv().await?;
+    assert_eq!(msg, json!({ "Title": "TODO List" }));
+
+    expect_text(&filter, "foobar", "").await;
+    Ok(())
+}

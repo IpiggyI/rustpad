@@ -27,6 +27,7 @@ export type SidebarProps = {
   darkMode: boolean;
   language: string;
   wordWrap: boolean;
+  documentTitle: string;
   currentUser: UserInfo;
   users: Record<number, UserInfo>;
   onDarkModeChange: () => void;
@@ -38,6 +39,7 @@ export type SidebarProps = {
   onCopyContent: () => void;
   onChangeName: (name: string) => void;
   onChangeColor: () => void;
+  onChangeDocumentTitle: (title: string) => void;
 };
 
 function Sidebar({
@@ -46,6 +48,7 @@ function Sidebar({
   darkMode,
   language,
   wordWrap,
+  documentTitle,
   currentUser,
   users,
   onDarkModeChange,
@@ -57,6 +60,7 @@ function Sidebar({
   onCopyContent,
   onChangeName,
   onChangeColor,
+  onChangeDocumentTitle,
 }: SidebarProps) {
   const toast = useToast();
 
@@ -116,6 +120,18 @@ function Sidebar({
       >
         Open Block Workspace
       </Button>
+
+      <Heading mt={4} mb={1.5} size="sm">
+        Document Title
+      </Heading>
+      <Input
+        size="sm"
+        placeholder={documentId}
+        bgColor={darkMode ? "#3c3c3c" : "white"}
+        borderColor={darkMode ? "#3c3c3c" : "white"}
+        value={documentTitle}
+        onChange={(e) => onChangeDocumentTitle(e.target.value)}
+      />
 
       <Heading mt={4} mb={1.5} size="sm">
         Language
