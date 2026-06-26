@@ -60,7 +60,7 @@ function SingleDocView({
   const [editor, setEditor] = useState<editor.IStandaloneCodeEditor>();
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState(
     "sidebarCollapsed",
-    { defaultValue: false },
+    { defaultValue: () => window.innerWidth < 480 },
   );
   const [wordWrap, setWordWrap] = useLocalStorageState("wordWrap", {
     defaultValue: false,
@@ -241,7 +241,7 @@ function SingleDocView({
   }
 
   return (
-    <Flex flex="1 0" minH={0}>
+    <Flex flex="1 0" minH={0} position="relative">
       {!sidebarCollapsed && (
         <Sidebar
           documentId={id}
@@ -262,6 +262,16 @@ function SingleDocView({
           onChangeName={(name) => name.length > 0 && setName(name)}
           onChangeColor={() => setHue(generateHue())}
           onChangeDocumentTitle={handleDocumentTitleChange}
+        />
+      )}
+      {!sidebarCollapsed && (
+        <Box
+          display={{ base: "block", sm: "none" }}
+          position="absolute"
+          inset={0}
+          zIndex={10}
+          bgColor="blackAlpha.500"
+          onClick={toggleSidebar}
         />
       )}
       <ReadCodeConfirm

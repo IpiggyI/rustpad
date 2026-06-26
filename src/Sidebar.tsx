@@ -91,7 +91,11 @@ function Sidebar({
   return (
     <Container
       w={{ base: "3xs", md: "2xs", lg: "xs" }}
-      display={{ base: "none", sm: "block" }}
+      position={{ base: "absolute", sm: "static" }}
+      top={{ base: 0, sm: "auto" }}
+      bottom={{ base: 0, sm: "auto" }}
+      left={{ base: 0, sm: "auto" }}
+      zIndex={{ base: 20, sm: "auto" }}
       bgColor={darkMode ? "#252526" : "#f3f3f3"}
       overflowY="auto"
       maxW="full"

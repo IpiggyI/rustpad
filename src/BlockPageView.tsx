@@ -83,7 +83,7 @@ function BlockPageView({
 
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState(
     "sidebarCollapsed",
-    { defaultValue: false },
+    { defaultValue: () => window.innerWidth < 480 },
   );
   const [wordWrap, setWordWrap] = useLocalStorageState("wordWrap", {
     defaultValue: false,
@@ -345,11 +345,15 @@ function BlockPageView({
   }
 
   return (
-    <Flex flex="1 0" minH={0}>
+    <Flex flex="1 0" minH={0} position="relative">
       {!sidebarCollapsed && (
         <Container
           w={{ base: "3xs", md: "2xs", lg: "xs" }}
-          display={{ base: "none", sm: "block" }}
+          position={{ base: "absolute", sm: "static" }}
+          top={{ base: 0, sm: "auto" }}
+          bottom={{ base: 0, sm: "auto" }}
+          left={{ base: 0, sm: "auto" }}
+          zIndex={{ base: 20, sm: "auto" }}
           bgColor={darkMode ? "#252526" : "#f3f3f3"}
           overflowY="auto"
           maxW="full"
@@ -469,6 +473,17 @@ function BlockPageView({
             collaborative document. Add, reorder, or remove blocks as needed.
           </Text>
         </Container>
+      )}
+
+      {!sidebarCollapsed && (
+        <Box
+          display={{ base: "block", sm: "none" }}
+          position="absolute"
+          inset={0}
+          zIndex={10}
+          bgColor="blackAlpha.500"
+          onClick={toggleSidebar}
+        />
       )}
 
       <Flex flex={1} minW={0} h="100%" direction="column" overflow="hidden">

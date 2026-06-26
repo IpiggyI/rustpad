@@ -60,8 +60,8 @@ class Rustpad {
   constructor(readonly options: RustpadOptions) {
     this.model = options.editor.getModel()!;
     this.lastValue = this.model.getValue();
-    this.onChangeHandle = options.editor.onDidChangeModelContent((e) =>
-      this.onChange(e),
+    this.onChangeHandle = options.editor.onDidChangeModelContent(() =>
+      this.onChange(),
     );
     const cursorUpdate = debounce(() => this.sendCursorData(), 20);
     this.onCursorHandle = options.editor.onDidChangeCursorPosition((e) => {
@@ -421,37 +421,57 @@ class Rustpad {
     );
   }
 
-  private onChange(event: editor.IModelContentChangedEvent) {
-    if (!this.ignoreChanges) {
-      const content = this.lastValue;
-      const contentLength = unicodeLength(content);
-      let offset = 0;
+  private onChange() {
+    if (this.ignoreChanges) return;
 
-      let operation = OpSeq.new();
-      operation.retain(contentLength);
-      event.changes.sort((a, b) => b.rangeOffset - a.rangeOffset);
-      for (const change of event.changes) {
-        // The following dance is necessary to convert from UTF-16 indices (evil
-        // encoding-dependent JavaScript representation) to portable Unicode
-        // codepoint indices.
-        const { text, rangeOffset, rangeLength } = change;
-        const initialLength = unicodeLength(content.slice(0, rangeOffset));
-        const deletedLength = unicodeLength(
-          content.slice(rangeOffset, rangeOffset + rangeLength),
-        );
-        const restLength =
-          contentLength + offset - initialLength - deletedLength;
-        const changeOp = OpSeq.new();
-        changeOp.retain(initialLength);
-        changeOp.delete(deletedLength);
-        changeOp.insert(text);
-        changeOp.retain(restLength);
-        operation = operation.compose(changeOp)!;
-        offset += changeOp.target_len() - changeOp.base_len();
-      }
-      this.applyClient(operation);
-      this.lastValue = this.model.getValue();
+    // Rebuild the operation by diffing the previous value against the current
+    // model value, rather than trusting Monaco's `event.changes`. On mobile,
+    // IME/composition delivers pasted and typed text as a series of change
+    // events that do not faithfully describe the delta from `lastValue`, which
+    // would yield an operation with a mismatched base length and desynchronize
+    // the client. A common prefix/suffix diff always produces a valid operation
+    // that maps `lastValue` to the new model value.
+    const oldValue = this.lastValue;
+    const newValue = this.model.getValue();
+    if (oldValue === newValue) return;
+
+    // Common prefix/suffix in UTF-16 code units, kept off surrogate-pair seams.
+    const maxPrefix = Math.min(oldValue.length, newValue.length);
+    let prefix = 0;
+    while (prefix < maxPrefix && oldValue[prefix] === newValue[prefix]) {
+      prefix++;
     }
+    if (prefix > 0 && isHighSurrogate(oldValue.charCodeAt(prefix - 1))) {
+      prefix--;
+    }
+
+    const maxSuffix = Math.min(oldValue.length, newValue.length) - prefix;
+    let suffix = 0;
+    while (
+      suffix < maxSuffix &&
+      oldValue[oldValue.length - 1 - suffix] ===
+        newValue[newValue.length - 1 - suffix]
+    ) {
+      suffix++;
+    }
+    if (
+      suffix > 0 &&
+      isLowSurrogate(oldValue.charCodeAt(oldValue.length - suffix))
+    ) {
+      suffix--;
+    }
+
+    const deleted = oldValue.slice(prefix, oldValue.length - suffix);
+    const inserted = newValue.slice(prefix, newValue.length - suffix);
+
+    const operation = OpSeq.new();
+    operation.retain(unicodeLength(oldValue.slice(0, prefix)));
+    operation.delete(unicodeLength(deleted));
+    operation.insert(inserted);
+    operation.retain(unicodeLength(oldValue.slice(oldValue.length - suffix)));
+
+    this.applyClient(operation);
+    this.lastValue = newValue;
   }
 
   private onCursor(event: editor.ICursorPositionChangedEvent) {
@@ -502,6 +522,16 @@ function unicodeLength(str: string): number {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for (const c of str) ++length;
   return length;
+}
+
+/** Returns whether a UTF-16 code unit is the high half of a surrogate pair. */
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+/** Returns whether a UTF-16 code unit is the low half of a surrogate pair. */
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
 }
 
 /** Returns the number of Unicode codepoints before a position in the model. */
