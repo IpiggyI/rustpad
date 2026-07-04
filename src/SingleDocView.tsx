@@ -324,6 +324,7 @@ function SingleDocView({
             options={{
               automaticLayout: true,
               fontSize: 13,
+              scrollBeyondLastLine: false,
             }}
             onMount={(editor) => setEditor(editor)}
           />
