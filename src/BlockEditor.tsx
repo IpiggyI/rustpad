@@ -280,6 +280,7 @@ function BlockEditor({
                 automaticLayout: true,
                 fontSize: 13,
                 scrollBeyondLastLine: false,
+                showFoldingControls: "always",
               }}
               onMount={(ed) => setEditorInstance(ed)}
             />
