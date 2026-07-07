@@ -20,8 +20,7 @@ async fn test_single_operation() -> Result<()> {
     expect_text(&filter, "foobar", "").await;
 
     let mut client = connect(&filter, "foobar").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut operation = OperationSeq::default();
     operation.insert("hello");
@@ -59,8 +58,7 @@ async fn test_invalid_operation() -> Result<()> {
     expect_text(&filter, "foobar", "").await;
 
     let mut client = connect(&filter, "foobar").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut operation = OperationSeq::default();
     operation.insert("hello");
@@ -84,8 +82,7 @@ async fn test_concurrent_transform() -> Result<()> {
 
     // Connect the first client
     let mut client = connect(&filter, "foobar").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     // Insert the first operation
     let mut operation = OperationSeq::default();
@@ -143,8 +140,7 @@ async fn test_concurrent_transform() -> Result<()> {
 
     // Connect the second client
     let mut client2 = connect(&filter, "foobar").await?;
-    let msg = client2.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 1 }));
+    expect_identity(&mut client2, 1).await?;
 
     // Insert a concurrent operation before seeing the existing history
     time::sleep(Duration::from_millis(50)).await;
@@ -202,8 +198,7 @@ async fn test_set_language() -> Result<()> {
     let filter = server(ServerConfig::default());
 
     let mut client = connect(&filter, "foobar").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let msg = json!({ "SetLanguage": "javascript" });
     client.send(&msg).await;
@@ -212,8 +207,8 @@ async fn test_set_language() -> Result<()> {
     assert_eq!(msg, json!({ "Language": "javascript" }));
 
     let mut client2 = connect(&filter, "foobar").await?;
-    let msg = client2.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 1 }));
+    expect_identity(&mut client2, 1).await?;
+    expect_empty_history(&mut client2).await?;
     let msg = client2.recv().await?;
     assert_eq!(msg, json!({ "Language": "javascript" }));
 
@@ -235,8 +230,7 @@ async fn test_set_title() -> Result<()> {
     let filter = server(ServerConfig::default());
 
     let mut client = connect(&filter, "foobar").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let msg = json!({ "SetTitle": "Work notes" });
     client.send(&msg).await;
@@ -245,8 +239,8 @@ async fn test_set_title() -> Result<()> {
     assert_eq!(msg, json!({ "Title": "Work notes" }));
 
     let mut client2 = connect(&filter, "foobar").await?;
-    let msg = client2.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 1 }));
+    expect_identity(&mut client2, 1).await?;
+    expect_empty_history(&mut client2).await?;
     let msg = client2.recv().await?;
     assert_eq!(msg, json!({ "Title": "Work notes" }));
 

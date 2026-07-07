@@ -232,12 +232,10 @@ impl Rustpad {
         let mut messages = Vec::new();
         let revision = {
             let state = self.state.read();
-            if !state.operations.is_empty() {
-                messages.push(ServerMsg::History {
-                    start: 0,
-                    operations: state.operations.clone(),
-                });
-            }
+            messages.push(ServerMsg::History {
+                start: 0,
+                operations: state.operations.clone(),
+            });
             if let Some(language) = &state.language {
                 messages.push(ServerMsg::Language(language.clone()));
             }

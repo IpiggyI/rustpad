@@ -17,8 +17,7 @@ async fn test_unicode_length() -> Result<()> {
     expect_text(&filter, "unicode", "").await;
 
     let mut client = connect(&filter, "unicode").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut operation = OperationSeq::default();
     operation.insert("h🎉e🎉l👨‍👨‍👦‍👦lo");
@@ -82,8 +81,7 @@ async fn test_multiple_operations() -> Result<()> {
     expect_text(&filter, "unicode", "").await;
 
     let mut client = connect(&filter, "unicode").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut operation = OperationSeq::default();
     operation.insert("🎉😍𒀇👨‍👨‍👦‍👦"); // Emoticons and Cuneiform
@@ -175,7 +173,7 @@ async fn test_unicode_cursors() -> Result<()> {
     let filter = server(ServerConfig::default());
 
     let mut client = connect(&filter, "unicode").await?;
-    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut operation = OperationSeq::default();
     operation.insert("🎉🎉🎉");
@@ -204,7 +202,7 @@ async fn test_unicode_cursors() -> Result<()> {
     assert_eq!(client.recv().await?, cursors_resp);
 
     let mut client2 = connect(&filter, "unicode").await?;
-    assert_eq!(client2.recv().await?, json!({ "Identity": 1 }));
+    expect_identity(&mut client2, 1).await?;
     client2.recv().await?;
     assert_eq!(client2.recv().await?, cursors_resp);
 
@@ -217,7 +215,7 @@ async fn test_unicode_cursors() -> Result<()> {
     client2.send(&msg).await;
 
     let mut client3 = connect(&filter, "unicode").await?;
-    assert_eq!(client3.recv().await?, json!({ "Identity": 2 }));
+    expect_identity(&mut client3, 2).await?;
     client3.recv().await?;
 
     let transformed_cursors_resp = json!({

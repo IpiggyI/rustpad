@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use serde_json::Value;
+use serde_json::{json, Value};
 use warp::{filters::BoxedFilter, test::WsClient, Reply};
 
 /// A test WebSocket client that sends and receives JSON messages.
@@ -31,6 +31,32 @@ pub async fn connect(
         .handshake(filter.clone())
         .await?;
     Ok(JsonSocket(client))
+}
+
+/// Expect the initial identity message for a new WebSocket.
+pub async fn expect_identity(client: &mut JsonSocket, id: u64) -> Result<()> {
+    assert_eq!(client.recv().await?, json!({ "Identity": id }));
+    Ok(())
+}
+
+/// Expect an empty initial history message.
+pub async fn expect_empty_history(client: &mut JsonSocket) -> Result<()> {
+    assert_eq!(
+        client.recv().await?,
+        json!({
+            "History": {
+                "start": 0,
+                "operations": []
+            }
+        })
+    );
+    Ok(())
+}
+
+/// Expect the initial messages for a new empty document.
+pub async fn expect_empty_initial(client: &mut JsonSocket, id: u64) -> Result<()> {
+    expect_identity(client, id).await?;
+    expect_empty_history(client).await
 }
 
 /// Check the text route.

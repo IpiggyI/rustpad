@@ -66,6 +66,7 @@ export function useManifest(
   const [connection, setConnection] = useState<
     "connected" | "disconnected" | "desynchronized"
   >("disconnected");
+  const [ready, setReady] = useState(false);
   const headlessRef = useRef<RustpadHeadless>();
   const lastValidManifest = useRef<Manifest>(fallbackManifest.current);
   const initialized = useRef(false);
@@ -83,6 +84,7 @@ export function useManifest(
         lastValidManifest.current = parsed;
         setManifest(parsed);
         initialized.current = true;
+        setReady(true);
         return;
       }
       // Server has no usable manifest (empty text, corrupt JSON, or zero blocks):
@@ -93,6 +95,7 @@ export function useManifest(
         initialized.current = true;
         lastValidManifest.current = init;
         setManifest(init);
+        setReady(true);
         headless.replaceContent(serializeManifest(init));
         const block = init.blocks[0];
         if (initialBlockRef.current && block) {
@@ -125,11 +128,13 @@ export function useManifest(
       headless.dispose();
       headlessRef.current = undefined;
       initialized.current = false;
+      setReady(false);
     };
   }, [pageId]);
 
   const updateManifest = useCallback(
     (updater: (prev: Manifest) => Manifest) => {
+      if (!initialized.current) return;
       const next = updater(lastValidManifest.current);
       lastValidManifest.current = next;
       setManifest(next);
@@ -204,6 +209,7 @@ export function useManifest(
   return {
     manifest,
     connection,
+    ready,
     addBlock,
     updateTitle,
     removeBlock,

@@ -73,7 +73,6 @@ class RustpadHeadless {
 
   private content: string = "";
   private contentReady: boolean = false;
-  private contentReadyId?: number;
 
   constructor(readonly options: RustpadHeadlessOptions) {
     const interval = options.reconnectInterval ?? 1000;
@@ -88,9 +87,6 @@ class RustpadHeadless {
   dispose() {
     window.clearInterval(this.tryConnectId);
     window.clearInterval(this.resetFailuresId);
-    if (this.contentReadyId !== undefined) {
-      window.clearTimeout(this.contentReadyId);
-    }
     this.ws?.close();
   }
 
@@ -139,12 +135,7 @@ class RustpadHeadless {
   private handleMessage(msg: ServerMsg) {
     if (msg.Identity !== undefined) {
       this.me = msg.Identity;
-      this.contentReadyId = window.setTimeout(() => this.markContentReady(), 100);
     } else if (msg.History !== undefined) {
-      if (this.contentReadyId !== undefined) {
-        window.clearTimeout(this.contentReadyId);
-        this.contentReadyId = undefined;
-      }
       const { start, operations } = msg.History;
       if (start > this.revision) {
         console.warn("History message has start greater than last operation.");
@@ -168,7 +159,6 @@ class RustpadHeadless {
   private markContentReady() {
     if (this.contentReady) return;
     this.contentReady = true;
-    this.contentReadyId = undefined;
     this.options.onContentReady?.(this.content);
   }
 

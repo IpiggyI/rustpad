@@ -45,7 +45,6 @@ class Rustpad {
   private outstanding?: OpSeq;
   private buffer?: OpSeq;
   private ready: boolean = false;
-  private readyId?: number;
   private users: Record<number, UserInfo> = {};
   private userCursors: Record<number, CursorData> = {};
   private myInfo?: UserInfo;
@@ -95,9 +94,6 @@ class Rustpad {
   dispose() {
     window.clearInterval(this.tryConnectId);
     window.clearInterval(this.resetFailuresId);
-    if (this.readyId !== undefined) {
-      window.clearTimeout(this.readyId);
-    }
     this.onSelectionHandle.dispose();
     this.onCursorHandle.dispose();
     this.onChangeHandle.dispose();
@@ -176,12 +172,7 @@ class Rustpad {
   private handleMessage(msg: ServerMsg) {
     if (msg.Identity !== undefined) {
       this.me = msg.Identity;
-      this.readyId = window.setTimeout(() => this.markReady(), 100);
     } else if (msg.History !== undefined) {
-      if (this.readyId !== undefined) {
-        window.clearTimeout(this.readyId);
-        this.readyId = undefined;
-      }
       const { start, operations } = msg.History;
       if (start > this.revision) {
         console.warn("History message has start greater than last operation.");
@@ -231,7 +222,6 @@ class Rustpad {
   private markReady() {
     if (this.ready) return;
     this.ready = true;
-    this.readyId = undefined;
     this.options.onReady?.();
   }
 

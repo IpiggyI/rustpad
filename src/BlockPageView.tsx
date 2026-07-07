@@ -76,6 +76,7 @@ function BlockPageView({
     removeBlock,
     updateBlock,
     moveBlock,
+    ready: manifestReady,
   } = useManifest(id, {
     initialManifest: initialManifest.current,
   });
@@ -110,6 +111,7 @@ function BlockPageView({
   }, [manifest.title, setDocumentTitle]);
 
   function handleDocumentTitleChange(title: string) {
+    if (!manifestReady) return;
     setDocumentTitle(title);
     updateTitle(title);
   }
@@ -133,8 +135,10 @@ function BlockPageView({
   );
 
   useEffect(() => {
-    saveCurrentSnapshot();
-  }, [id, manifest]);
+    if (manifestReady) {
+      saveCurrentSnapshot();
+    }
+  }, [id, manifest, manifestReady]);
 
   function saveCurrentSnapshot(nextContents = liveBlockContents.current) {
     const snapshot = {
@@ -192,7 +196,9 @@ function BlockPageView({
   }
 
   function handleBlockModeChange() {
-    saveCurrentSnapshot();
+    if (manifestReady) {
+      saveCurrentSnapshot();
+    }
     window.location.hash = id;
   }
 
@@ -220,7 +226,7 @@ function BlockPageView({
   }
 
   async function handleCopyAll() {
-    if (manifest.blocks.length === 0) return;
+    if (!manifestReady || manifest.blocks.length === 0) return;
     try {
       const contents = await Promise.all(
         manifest.blocks.map((b) => resolveBlockContent(b.id, b.title)),
@@ -302,7 +308,7 @@ function BlockPageView({
   }
 
   async function handleExportAll() {
-    if (manifest.blocks.length === 0) return;
+    if (!manifestReady || manifest.blocks.length === 0) return;
     try {
       const contents = await Promise.all(
         manifest.blocks.map((b) => resolveBlockContent(b.id, b.title)),
@@ -395,6 +401,7 @@ function BlockPageView({
             bgColor={darkMode ? "#3c3c3c" : "white"}
             borderColor={darkMode ? "#3c3c3c" : "white"}
             value={documentTitle}
+            isDisabled={!manifestReady}
             onChange={(e) => handleDocumentTitleChange(e.target.value)}
           />
 
@@ -433,6 +440,7 @@ function BlockPageView({
               variant="outline"
               leftIcon={<VscCopy />}
               flex={1}
+              isDisabled={!manifestReady || manifest.blocks.length === 0}
               onClick={handleCopyAll}
             >
               Copy
@@ -445,6 +453,7 @@ function BlockPageView({
               variant="outline"
               leftIcon={<VscCloudDownload />}
               flex={1}
+              isDisabled={!manifestReady || manifest.blocks.length === 0}
               onClick={handleExportAll}
             >
               Export
@@ -455,14 +464,18 @@ function BlockPageView({
             Blocks
           </Heading>
           <Stack spacing={1} fontSize="sm">
-            {manifest.blocks.map((block) => (
-              <Text key={block.id} noOfLines={1}>
-                {block.title}{" "}
-                <Text as="span" color={darkMode ? "#888" : "#999"}>
-                  ({block.language})
+            {manifestReady ? (
+              manifest.blocks.map((block) => (
+                <Text key={block.id} noOfLines={1}>
+                  {block.title}{" "}
+                  <Text as="span" color={darkMode ? "#888" : "#999"}>
+                    ({block.language})
+                  </Text>
                 </Text>
-              </Text>
-            ))}
+              ))
+            ) : (
+              <Text color={darkMode ? "#888" : "#666"}>Loading...</Text>
+            )}
           </Stack>
 
           <Heading mt={4} mb={1.5} size="sm">
@@ -516,8 +529,8 @@ function BlockPageView({
           />
           <Text>page: {id}</Text>
           <Text color="#aaa">
-            ({manifest.blocks.length} block
-            {manifest.blocks.length !== 1 ? "s" : ""})
+            ({manifestReady ? manifest.blocks.length : 0} block
+            {manifestReady && manifest.blocks.length === 1 ? "" : "s"})
           </Text>
         </HStack>
 
@@ -528,6 +541,7 @@ function BlockPageView({
               size="sm"
               variant="outline"
               colorScheme={darkMode ? "whiteAlpha" : "gray"}
+              isDisabled={!manifestReady}
               onClick={() => {
                 addBlock();
               }}
@@ -535,32 +549,38 @@ function BlockPageView({
               Add Block
             </Button>
 
-            {manifest.blocks.map((block) => (
-              <BlockEditor
-                key={block.id}
-                pageId={id}
-                block={block}
-                darkMode={darkMode}
-                wordWrap={wordWrap}
-                initialContent={initialContentByBlock.current[block.id]}
-                onUpdateBlock={(patch) => {
-                  updateBlock(block.id, patch);
-                }}
-                onRemoveBlock={() => {
-                  removeBlock(block.id);
-                }}
-                onMoveBlock={(dir) => {
-                  moveBlock(block.id, dir);
-                }}
-                onContentChange={(content) =>
-                  rememberBlockContent(block.id, content)
-                }
-                onCopyBlock={() => handleCopyBlock(block.id, block.title)}
-                onExportBlock={() =>
-                  handleExportBlock(block.id, block.title, block.language)
-                }
-              />
-            ))}
+            {manifestReady ? (
+              manifest.blocks.map((block) => (
+                <BlockEditor
+                  key={block.id}
+                  pageId={id}
+                  block={block}
+                  darkMode={darkMode}
+                  wordWrap={wordWrap}
+                  initialContent={initialContentByBlock.current[block.id]}
+                  onUpdateBlock={(patch) => {
+                    updateBlock(block.id, patch);
+                  }}
+                  onRemoveBlock={() => {
+                    removeBlock(block.id);
+                  }}
+                  onMoveBlock={(dir) => {
+                    moveBlock(block.id, dir);
+                  }}
+                  onContentChange={(content) =>
+                    rememberBlockContent(block.id, content)
+                  }
+                  onCopyBlock={() => handleCopyBlock(block.id, block.title)}
+                  onExportBlock={() =>
+                    handleExportBlock(block.id, block.title, block.language)
+                  }
+                />
+              ))
+            ) : (
+              <Text color={darkMode ? "#888" : "#666"}>
+                Loading workspace...
+              </Text>
+            )}
           </VStack>
         </Box>
       </Flex>

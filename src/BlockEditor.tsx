@@ -34,7 +34,9 @@ type BlockEditorProps = {
   darkMode: boolean;
   wordWrap: boolean;
   initialContent?: string;
-  onUpdateBlock: (patch: Partial<Pick<BlockInfo, "title" | "language">>) => void;
+  onUpdateBlock: (
+    patch: Partial<Pick<BlockInfo, "title" | "language">>,
+  ) => void;
   onRemoveBlock: () => void;
   onMoveBlock: (direction: "up" | "down") => void;
   onContentChange: (content: string) => void;
@@ -276,6 +278,7 @@ function BlockEditor({
             <Editor
               theme={darkMode ? "vs-dark" : "vs"}
               language={block.language}
+              path={`rustpad-block://${pageId}/${block.id}`}
               options={{
                 automaticLayout: true,
                 fontSize: 13,

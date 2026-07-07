@@ -73,8 +73,7 @@ async fn test_persist() -> Result<()> {
     expect_text(&filter, "persist", "").await;
 
     let mut client = connect(&filter, "persist").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut operation = OperationSeq::default();
     operation.insert("hello");
@@ -118,8 +117,7 @@ async fn test_persist_metadata() -> Result<()> {
     });
 
     let mut client = connect(&filter, "metadata").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     client.send(&json!({ "SetTitle": "Project notes" })).await;
     let msg = client.recv().await?;

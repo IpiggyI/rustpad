@@ -13,7 +13,7 @@ async fn test_two_users() -> Result<()> {
     let filter = server(ServerConfig::default());
 
     let mut client = connect(&filter, "foobar").await?;
-    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let alice = json!({
         "name": "Alice",
@@ -30,7 +30,8 @@ async fn test_two_users() -> Result<()> {
     assert_eq!(client.recv().await?, alice_info);
 
     let mut client2 = connect(&filter, "foobar").await?;
-    assert_eq!(client2.recv().await?, json!({ "Identity": 1 }));
+    expect_identity(&mut client2, 1).await?;
+    expect_empty_history(&mut client2).await?;
     assert_eq!(client2.recv().await?, alice_info);
 
     let bob = json!({
@@ -57,7 +58,7 @@ async fn test_invalid_user() -> Result<()> {
     let filter = server(ServerConfig::default());
 
     let mut client = connect(&filter, "foobar").await?;
-    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let alice = json!({ "name": "Alice" }); // no hue
     client.send(&json!({ "ClientInfo": alice })).await;
@@ -72,7 +73,7 @@ async fn test_leave_rejoin() -> Result<()> {
     let filter = server(ServerConfig::default());
 
     let mut client = connect(&filter, "foobar").await?;
-    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let alice = json!({
         "name": "Alice",
@@ -92,7 +93,7 @@ async fn test_leave_rejoin() -> Result<()> {
     client.recv_closed().await?;
 
     let mut client2 = connect(&filter, "foobar").await?;
-    assert_eq!(client2.recv().await?, json!({ "Identity": 1 }));
+    expect_empty_initial(&mut client2, 1).await?;
 
     let bob = json!({
         "name": "Bob",
@@ -117,7 +118,7 @@ async fn test_cursors() -> Result<()> {
     let filter = server(ServerConfig::default());
 
     let mut client = connect(&filter, "foobar").await?;
-    assert_eq!(client.recv().await?, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let cursors = json!({
         "cursors": [4, 6, 7],
@@ -134,7 +135,8 @@ async fn test_cursors() -> Result<()> {
     assert_eq!(client.recv().await?, cursors_resp);
 
     let mut client2 = connect(&filter, "foobar").await?;
-    assert_eq!(client2.recv().await?, json!({ "Identity": 1 }));
+    expect_identity(&mut client2, 1).await?;
+    expect_empty_history(&mut client2).await?;
     assert_eq!(client2.recv().await?, cursors_resp);
 
     let cursors2 = json!({
@@ -164,7 +166,7 @@ async fn test_cursors() -> Result<()> {
     client2.send(&msg).await;
 
     let mut client3 = connect(&filter, "foobar").await?;
-    assert_eq!(client3.recv().await?, json!({ "Identity": 2 }));
+    expect_identity(&mut client3, 2).await?;
     client3.recv().await?;
 
     let transformed_cursors2_resp = json!({

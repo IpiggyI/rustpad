@@ -20,12 +20,10 @@ async fn test_lost_wakeups() -> Result<()> {
     expect_text(&filter, "stress", "").await;
 
     let mut client = connect(&filter, "stress").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut client2 = connect(&filter, "stress").await?;
-    let msg = client2.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 1 }));
+    expect_empty_initial(&mut client2, 1).await?;
 
     let mut revision = 0;
     for i in 0..100 {
@@ -79,8 +77,7 @@ async fn test_large_document() -> Result<()> {
     expect_text(&filter, "stress", "").await;
 
     let mut client = connect(&filter, "stress").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut operation = OperationSeq::default();
     operation.insert(&"a".repeat(5000));

@@ -22,8 +22,7 @@ async fn test_cleanup() -> Result<()> {
     expect_text(&filter, "old", "").await;
 
     let mut client = connect(&filter, "old").await?;
-    let msg = client.recv().await?;
-    assert_eq!(msg, json!({ "Identity": 0 }));
+    expect_empty_initial(&mut client, 0).await?;
 
     let mut operation = OperationSeq::default();
     operation.insert("hello");
