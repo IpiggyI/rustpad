@@ -4,9 +4,14 @@ export type BlockInfo = {
   language: string;
   height?: number;
   collapsed?: boolean;
+  folds?: unknown;
 };
 
-export type BlockLayout = { height?: number; collapsed?: boolean };
+export type BlockLayout = {
+  height?: number;
+  collapsed?: boolean;
+  folds?: unknown;
+};
 
 export type Manifest = {
   version: number;
@@ -158,6 +163,38 @@ export function updateBlock(
   };
 }
 
+function isEmptyFoldRecord(value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.length === 0);
+}
+
+function jsonValuesAreEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object") return false;
+  if (left === null || right === null) return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i++) {
+      if (!jsonValuesAreEqual(left[i], right[i])) return false;
+    }
+    return true;
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  if (leftKeys.length !== Object.keys(rightRecord).length) return false;
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(rightRecord, key)) return false;
+    if (!jsonValuesAreEqual(leftRecord[key], rightRecord[key])) return false;
+  }
+  return true;
+}
+
+export function doesFoldRecordDiffer(next: unknown, saved: unknown): boolean {
+  if (isEmptyFoldRecord(next) && isEmptyFoldRecord(saved)) return false;
+  return !jsonValuesAreEqual(next, saved);
+}
+
 function applyLayout(block: BlockInfo, layout: BlockLayout): BlockInfo | null {
   const next: BlockInfo = { ...block };
   let changed = false;
@@ -167,6 +204,13 @@ function applyLayout(block: BlockInfo, layout: BlockLayout): BlockInfo | null {
   }
   if (layout.collapsed !== undefined && layout.collapsed !== block.collapsed) {
     next.collapsed = layout.collapsed;
+    changed = true;
+  }
+  if (
+    layout.folds !== undefined &&
+    doesFoldRecordDiffer(layout.folds, block.folds)
+  ) {
+    next.folds = layout.folds;
     changed = true;
   }
   return changed ? next : null;

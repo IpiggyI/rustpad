@@ -10,6 +10,7 @@ export type BlockSnapshot = {
     content: string;
     height?: number;
     collapsed?: boolean;
+    folds?: unknown;
   }>;
 };
 

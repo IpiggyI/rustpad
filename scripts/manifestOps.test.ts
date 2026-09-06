@@ -5,6 +5,7 @@ import {
   type BlockInfo,
   type Manifest,
   addBlock,
+  doesFoldRecordDiffer,
   migrateLegacyLayout,
   moveBlock,
   parseManifest,
@@ -454,6 +455,150 @@ test("migrateLegacyLayout returns the original manifest when every present field
     aaaaaa: { height: 1, collapsed: true },
     bbbbbb: { height: 2, collapsed: false },
   });
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
+});
+
+const sampleFolds = [
+  {
+    startLineNumber: 1,
+    endLineNumber: 4,
+    isCollapsed: true,
+    checksum: 42,
+  },
+];
+
+test("doesFoldRecordDiffer is false when both records are missing", () => {
+  assert.equal(doesFoldRecordDiffer(undefined, undefined), false);
+});
+
+test("doesFoldRecordDiffer is false when a missing record matches an empty array", () => {
+  assert.equal(doesFoldRecordDiffer(undefined, []), false);
+  assert.equal(doesFoldRecordDiffer([], undefined), false);
+});
+
+test("doesFoldRecordDiffer is false for two empty arrays", () => {
+  assert.equal(doesFoldRecordDiffer([], []), false);
+});
+
+test("doesFoldRecordDiffer is false when two fold records are deeply equal", () => {
+  assert.equal(
+    doesFoldRecordDiffer(sampleFolds, structuredClone(sampleFolds)),
+    false,
+  );
+});
+
+test("doesFoldRecordDiffer is false when two fold records have the same keys in different order", () => {
+  const left = [
+    {
+      checksum: 1,
+      startLineNumber: 1,
+      endLineNumber: 3,
+      isCollapsed: true,
+    },
+  ];
+  const right = [
+    {
+      startLineNumber: 1,
+      endLineNumber: 3,
+      isCollapsed: true,
+      checksum: 1,
+    },
+  ];
+  assert.equal(doesFoldRecordDiffer(left, right), false);
+});
+
+test("doesFoldRecordDiffer is true when collapsed regions differ", () => {
+  const other = [
+    {
+      startLineNumber: 2,
+      endLineNumber: 8,
+      isCollapsed: true,
+      checksum: 42,
+    },
+  ];
+  assert.equal(doesFoldRecordDiffer(sampleFolds, other), true);
+});
+
+test("doesFoldRecordDiffer is true when a fold record appears where none was saved", () => {
+  assert.equal(doesFoldRecordDiffer(sampleFolds, undefined), true);
+});
+
+test("doesFoldRecordDiffer is true when a saved fold record is cleared", () => {
+  assert.equal(doesFoldRecordDiffer(undefined, sampleFolds), true);
+  assert.equal(doesFoldRecordDiffer([], sampleFolds), true);
+});
+
+test("doesFoldRecordDiffer is true when a non-array record replaces an empty record", () => {
+  assert.equal(doesFoldRecordDiffer({ collapsedRegions: [] }, undefined), true);
+});
+
+test("parseManifest keeps a folds field on a block entry", () => {
+  const text = JSON.stringify({
+    version: 1,
+    title: "Workspace",
+    blocks: [
+      {
+        id: "abc123",
+        title: "Intro",
+        language: "markdown",
+        folds: sampleFolds,
+      },
+    ],
+  });
+  assert.deepEqual(parseManifest(text)?.blocks[0].folds, sampleFolds);
+});
+
+test("updateBlockLayout writes folds on the target block and leaves other fields byte-identical", () => {
+  const extra = { ...a, height: 240, collapsed: true };
+  const input = freezeManifest(
+    structuredClone(manifest([extra, b, c], "workspace")),
+  );
+  const before = structuredClone(input);
+  const result = updateBlockLayout(input, "bbbbbb", { folds: sampleFolds });
+  assert.deepEqual(result.blocks[1], {
+    id: "bbbbbb",
+    title: "B",
+    language: "python",
+    folds: sampleFolds,
+  });
+  assert.equal(
+    JSON.stringify(withoutBlock(result, "bbbbbb")),
+    JSON.stringify(withoutBlock(input, "bbbbbb")),
+  );
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
+test("updateBlockLayout patches folds and keeps height and collapsed", () => {
+  const target = { ...b, height: 300, collapsed: true };
+  const input = freezeManifest(structuredClone(manifest([a, target, c])));
+  const before = structuredClone(input);
+  const result = updateBlockLayout(input, "bbbbbb", { folds: sampleFolds });
+  assert.deepEqual(result.blocks[1].folds, sampleFolds);
+  assert.equal(result.blocks[1].height, 300);
+  assert.equal(result.blocks[1].collapsed, true);
+  assert.deepEqual(result.blocks[0], a);
+  assert.deepEqual(result.blocks[2], c);
+  assertUntouched(input, before);
+});
+
+test("updateBlockLayout returns the original manifest when folds are equivalent", () => {
+  const target = { ...b, folds: sampleFolds };
+  const input = freezeManifest(structuredClone(manifest([a, target, c])));
+  const before = structuredClone(input);
+  const result = updateBlockLayout(input, "bbbbbb", {
+    folds: structuredClone(sampleFolds),
+  });
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
+});
+
+test("updateBlockLayout returns the original manifest when incoming folds are empty and none are stored", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  const result = updateBlockLayout(input, "bbbbbb", { folds: [] });
   assert.equal(result, input);
   assertNoChange(result, input, before);
 });

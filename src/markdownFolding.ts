@@ -50,3 +50,49 @@ export function registerMarkdownFolding(m: Monaco) {
       computeHeadingRanges(model.getLinesContent()),
   });
 }
+
+const FOLDING_CONTRIBUTION_ID = "editor.contrib.folding";
+
+type FoldingModelHandle = {
+  getMemento(): unknown;
+  applyMemento(state: unknown): void;
+};
+
+type FoldingContribution = monaco.editor.IEditorContribution & {
+  getFoldingModel(): Promise<FoldingModelHandle | null> | null;
+};
+
+async function waitForFoldingModel(
+  ed: monaco.editor.ICodeEditor,
+): Promise<FoldingModelHandle | null> {
+  const contribution = ed.getContribution<FoldingContribution>(
+    FOLDING_CONTRIBUTION_ID,
+  );
+  if (!contribution) return null;
+  const pending = contribution.getFoldingModel();
+  if (!pending) return null;
+  const model = await pending;
+  const latest = contribution.getFoldingModel();
+  if (latest && latest !== pending) {
+    return await latest;
+  }
+  return model;
+}
+
+export async function readFoldRecord(
+  ed: monaco.editor.ICodeEditor,
+): Promise<unknown> {
+  const model = await waitForFoldingModel(ed);
+  return model?.getMemento();
+}
+
+export async function restoreFoldRecord(
+  ed: monaco.editor.ICodeEditor,
+  record: unknown,
+): Promise<void> {
+  if (record === undefined || (Array.isArray(record) && record.length === 0)) {
+    return;
+  }
+  const model = await waitForFoldingModel(ed);
+  model?.applyMemento(record);
+}

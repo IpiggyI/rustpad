@@ -13,6 +13,7 @@ import {
   Text,
 } from "@chakra-ui/react";
 import Editor from "@monaco-editor/react";
+import debounce from "lodash.debounce";
 import { editor } from "monaco-editor/esm/vs/editor/editor.api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -32,6 +33,8 @@ import {
 import type { BlockInfo, BlockLayout, MoveDirection } from "./BlockManifest";
 import ImeInput from "./ImeInput";
 import languages from "./languages.json";
+import { doesFoldRecordDiffer } from "./manifestOps";
+import { readFoldRecord, restoreFoldRecord } from "./markdownFolding";
 import Rustpad, { UserInfo } from "./rustpad";
 import { getWsUri } from "./useHash";
 
@@ -74,6 +77,7 @@ function BlockEditor({
   >("disconnected");
   const [editorInstance, setEditorInstance] =
     useState<editor.IStandaloneCodeEditor>();
+  const [contentReady, setContentReady] = useState(false);
   const rustpad = useRef<Rustpad>();
   const [users, setUsers] = useState<Record<number, UserInfo>>({});
   // Keep the latest onContentChange in a ref so the connection effect below does
@@ -81,9 +85,15 @@ function BlockEditor({
   // depending on it would dispose+recreate the Rustpad connection (and reset the
   // model) on every parent render.
   const onContentChangeRef = useRef(onContentChange);
+  const onUpdateLayoutRef = useRef(onUpdateLayout);
+  const foldsRef = useRef(block.folds);
+  const lastSavedFoldsRef = useRef(block.folds);
+  const restoringFoldsRef = useRef(false);
   useEffect(() => {
     onContentChangeRef.current = onContentChange;
   });
+  onUpdateLayoutRef.current = onUpdateLayout;
+  foldsRef.current = block.folds;
 
   const docId = `page:${pageId}:block:${block.id}`;
 
@@ -96,6 +106,7 @@ function BlockEditor({
   }, [collapsed]);
 
   useEffect(() => {
+    setContentReady(false);
     if (editorInstance?.getModel() && !collapsed) {
       const model = editorInstance.getModel()!;
       // Connect with an empty model and let the server History sync the real
@@ -120,6 +131,7 @@ function BlockEditor({
               () => null,
             );
           }
+          setContentReady(true);
         },
         onDisconnected: () => setConnection("disconnected"),
         onDesynchronized: () => setConnection("desynchronized"),
@@ -128,6 +140,7 @@ function BlockEditor({
       return () => {
         rustpad.current?.dispose();
         rustpad.current = undefined;
+        setContentReady(false);
       };
     }
   }, [docId, editorInstance, collapsed, initialContent]);
@@ -144,6 +157,60 @@ function BlockEditor({
     });
     return () => disposable.dispose();
   }, [editorInstance]);
+
+  useEffect(() => {
+    if (!editorInstance || collapsed || !contentReady) return;
+
+    let cancelled = false;
+    restoringFoldsRef.current = true;
+
+    const persist = debounce(() => {
+      if (cancelled || restoringFoldsRef.current) return;
+      void readFoldRecord(editorInstance).then((next) => {
+        if (cancelled || restoringFoldsRef.current) return;
+        if (!editorInstance.getModel()) return;
+        if (!doesFoldRecordDiffer(next, lastSavedFoldsRef.current)) return;
+        const stored = next === undefined ? [] : next;
+        lastSavedFoldsRef.current = stored;
+        onUpdateLayoutRef.current({ folds: stored });
+      });
+    }, 200);
+
+    const hiddenAreas = editorInstance.onDidChangeHiddenAreas(() => {
+      persist();
+    });
+
+    void restoreFoldRecord(editorInstance, foldsRef.current).finally(() => {
+      if (!cancelled) {
+        restoringFoldsRef.current = false;
+        persist.cancel();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      restoringFoldsRef.current = false;
+      persist.cancel();
+      hiddenAreas.dispose();
+    };
+  }, [collapsed, contentReady, editorInstance]);
+
+  useEffect(() => {
+    if (!editorInstance || collapsed || !contentReady) return;
+    if (!doesFoldRecordDiffer(block.folds, lastSavedFoldsRef.current)) {
+      lastSavedFoldsRef.current = block.folds;
+      return;
+    }
+    lastSavedFoldsRef.current = block.folds;
+    let cancelled = false;
+    restoringFoldsRef.current = true;
+    void restoreFoldRecord(editorInstance, block.folds).finally(() => {
+      if (!cancelled) restoringFoldsRef.current = false;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [block.folds, collapsed, contentReady, editorInstance]);
 
   const startResize = useCallback(
     (e: React.PointerEvent) => {
