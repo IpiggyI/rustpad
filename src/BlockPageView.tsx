@@ -30,6 +30,7 @@ import BlockEditor from "./BlockEditor";
 import { Manifest, useManifest } from "./BlockManifest";
 import ConnectionStatus from "./ConnectionStatus";
 import Footer from "./Footer";
+import ImeInput from "./ImeInput";
 import { loadBlockSnapshot, saveBlockSnapshot } from "./blockModeSync";
 import languageExtensions from "./extensions";
 import RustpadHeadless from "./rustpad-headless";
@@ -395,14 +396,14 @@ function BlockPageView({
           <Heading mt={4} mb={1.5} size="sm">
             Document Title
           </Heading>
-          <Input
+          <ImeInput
             size="sm"
             placeholder={id}
             bgColor={darkMode ? "#3c3c3c" : "white"}
             borderColor={darkMode ? "#3c3c3c" : "white"}
             value={documentTitle}
             isDisabled={!manifestReady}
-            onChange={(e) => handleDocumentTitleChange(e.target.value)}
+            onValueChange={handleDocumentTitleChange}
           />
 
           <Heading mt={4} mb={1.5} size="sm">

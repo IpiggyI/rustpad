@@ -4,7 +4,6 @@ import {
   HStack,
   Icon,
   IconButton,
-  Input,
   Select,
   Text,
 } from "@chakra-ui/react";
@@ -24,6 +23,7 @@ import {
 import useLocalStorageState from "use-local-storage-state";
 
 import type { BlockInfo } from "./BlockManifest";
+import ImeInput from "./ImeInput";
 import languages from "./languages.json";
 import Rustpad, { UserInfo } from "./rustpad";
 import { getWsUri } from "./useHash";
@@ -199,13 +199,13 @@ function BlockEditor({
 
         <Icon as={VscCircleFilled} color={connectionColor} boxSize={2} />
 
-        <Input
+        <ImeInput
           size="xs"
           variant="unstyled"
           fontWeight="semibold"
           fontSize="sm"
           value={block.title}
-          onChange={(e) => onUpdateBlock({ title: e.target.value })}
+          onValueChange={(title) => onUpdateBlock({ title })}
           maxW="200px"
           px={1}
         />

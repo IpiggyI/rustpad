@@ -35,6 +35,8 @@ class Rustpad {
   private readonly onChangeHandle: IDisposable;
   private readonly onCursorHandle: IDisposable;
   private readonly onSelectionHandle: IDisposable;
+  private readonly onCompositionStartHandle: IDisposable;
+  private readonly onCompositionEndHandle: IDisposable;
   private readonly beforeUnload: (event: BeforeUnloadEvent) => void;
   private readonly tryConnectId: number;
   private readonly resetFailuresId: number;
@@ -54,6 +56,7 @@ class Rustpad {
   // Intermittent local editor state
   private lastValue: string;
   private ignoreChanges: boolean = false;
+  private composing: boolean = false;
   private oldDecorations: string[] = [];
 
   constructor(readonly options: RustpadOptions) {
@@ -62,6 +65,13 @@ class Rustpad {
     this.onChangeHandle = options.editor.onDidChangeModelContent(() =>
       this.onChange(),
     );
+    this.onCompositionStartHandle = options.editor.onDidCompositionStart(() => {
+      this.composing = true;
+    });
+    this.onCompositionEndHandle = options.editor.onDidCompositionEnd(() => {
+      this.composing = false;
+      this.updateCursors();
+    });
     const cursorUpdate = debounce(() => this.sendCursorData(), 20);
     this.onCursorHandle = options.editor.onDidChangeCursorPosition((e) => {
       this.onCursor(e);
@@ -97,6 +107,8 @@ class Rustpad {
     this.onSelectionHandle.dispose();
     this.onCursorHandle.dispose();
     this.onChangeHandle.dispose();
+    this.onCompositionEndHandle.dispose();
+    this.onCompositionStartHandle.dispose();
     window.removeEventListener("beforeunload", this.beforeUnload);
     this.ws?.close();
   }
@@ -359,6 +371,9 @@ class Rustpad {
   }
 
   private updateCursors() {
+    // Decoration writes during IME composition can reset the native buffer.
+    if (this.composing) return;
+
     const decorations: editor.IModelDeltaDecoration[] = [];
 
     for (const [id, data] of Object.entries(this.userCursors)) {

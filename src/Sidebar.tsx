@@ -17,6 +17,7 @@ import {
 import { VscCloudDownload, VscCopy, VscRepo } from "react-icons/vsc";
 
 import ConnectionStatus from "./ConnectionStatus";
+import ImeInput from "./ImeInput";
 import User from "./User";
 import languages from "./languages.json";
 import type { UserInfo } from "./rustpad";
@@ -128,13 +129,13 @@ function Sidebar({
       <Heading mt={4} mb={1.5} size="sm">
         Document Title
       </Heading>
-      <Input
+      <ImeInput
         size="sm"
         placeholder={documentId}
         bgColor={darkMode ? "#3c3c3c" : "white"}
         borderColor={darkMode ? "#3c3c3c" : "white"}
         value={documentTitle}
-        onChange={(e) => onChangeDocumentTitle(e.target.value)}
+        onValueChange={onChangeDocumentTitle}
       />
 
       <Heading mt={4} mb={1.5} size="sm">

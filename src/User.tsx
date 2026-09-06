@@ -3,7 +3,6 @@ import {
   ButtonGroup,
   HStack,
   Icon,
-  Input,
   Popover,
   PopoverArrow,
   PopoverBody,
@@ -19,6 +18,7 @@ import { useRef } from "react";
 import { FaPalette } from "react-icons/fa";
 import { VscAccount } from "react-icons/vsc";
 
+import ImeInput from "./ImeInput";
 import { UserInfo } from "./rustpad";
 
 type UserProps = {
@@ -77,12 +77,12 @@ function User({
         <PopoverArrow bgColor={darkMode ? "#333333" : "white"} />
         <PopoverCloseButton />
         <PopoverBody borderColor={darkMode ? "#464647" : "gray.200"}>
-          <Input
+          <ImeInput
             ref={inputRef}
             mb={2}
             value={info.name}
             maxLength={25}
-            onChange={(event) => onChangeName?.(event.target.value)}
+            onValueChange={(name) => onChangeName?.(name)}
           />
           <Button
             size="sm"
