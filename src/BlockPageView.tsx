@@ -16,7 +16,7 @@ import {
   VStack,
   useToast,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   VscAdd,
   VscCloudDownload,
@@ -27,7 +27,12 @@ import {
 import useLocalStorageState from "use-local-storage-state";
 
 import BlockEditor from "./BlockEditor";
-import { Manifest, useManifest } from "./BlockManifest";
+import {
+  type BlockLayout,
+  Manifest,
+  migrateLegacyLayout,
+  useManifest,
+} from "./BlockManifest";
 import ConnectionStatus from "./ConnectionStatus";
 import Footer from "./Footer";
 import ImeInput from "./ImeInput";
@@ -37,6 +42,69 @@ import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
 
 const exportTimeoutMs = 10000;
+
+function readLegacyNumber(raw: string | null): number | undefined {
+  if (raw === null) return undefined;
+  try {
+    const value = JSON.parse(raw);
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  } catch {
+    const value = Number(raw);
+    if (Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function readLegacyBoolean(raw: string | null): boolean | undefined {
+  if (raw === null) return undefined;
+  try {
+    const value = JSON.parse(raw);
+    if (typeof value === "boolean") return value;
+  } catch {
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+  }
+  return undefined;
+}
+
+function collectLegacyLayouts(
+  pageId: string,
+  blockIds: readonly string[],
+): Record<string, BlockLayout> {
+  const legacy: Record<string, BlockLayout> = {};
+  for (const blockId of blockIds) {
+    let rawHeight: string | null = null;
+    let rawCollapsed: string | null = null;
+    try {
+      rawHeight = window.localStorage.getItem(
+        `block-height:${pageId}:${blockId}`,
+      );
+      rawCollapsed = window.localStorage.getItem(
+        `block-collapsed:${pageId}:${blockId}`,
+      );
+    } catch {
+      continue;
+    }
+    const layout: BlockLayout = {};
+    const height = readLegacyNumber(rawHeight);
+    const collapsed = readLegacyBoolean(rawCollapsed);
+    if (height !== undefined) layout.height = height;
+    if (collapsed !== undefined) layout.collapsed = collapsed;
+    if (layout.height !== undefined || layout.collapsed !== undefined) {
+      legacy[blockId] = layout;
+    }
+  }
+  return legacy;
+}
+
+function clearLegacyLayout(pageId: string, blockId: string): void {
+  try {
+    window.localStorage.removeItem(`block-height:${pageId}:${blockId}`);
+    window.localStorage.removeItem(`block-collapsed:${pageId}:${blockId}`);
+  } catch {
+    // leftover cleanup must never interrupt editing
+  }
+}
 
 function BlockPageView({
   id,
@@ -51,12 +119,18 @@ function BlockPageView({
   const initialSnapshot = useRef(loadBlockSnapshot(id));
   const initialManifest = useRef<Manifest | undefined>(
     initialSnapshot.current
-      ? {
-          version: initialSnapshot.current.version,
-          blocks: initialSnapshot.current.blocks.map(
-            ({ content, ...block }) => block,
+      ? migrateLegacyLayout(
+          {
+            version: initialSnapshot.current.version,
+            blocks: initialSnapshot.current.blocks.map(
+              ({ content, ...block }) => block,
+            ),
+          },
+          collectLegacyLayouts(
+            id,
+            initialSnapshot.current.blocks.map((block) => block.id),
           ),
-        }
+        )
       : undefined,
   );
   const initialContentByBlock = useRef<Record<string, string>>(
@@ -76,12 +150,27 @@ function BlockPageView({
     updateTitle,
     removeBlock,
     updateBlock,
+    updateBlockLayout,
+    migrateLegacyLayout: adoptLegacyLayout,
     moveBlock,
     ready: manifestReady,
   } = useManifest(id, {
     initialManifest: initialManifest.current,
   });
   const liveBlockContents = useRef<Record<string, string>>({});
+  const blockIdsKey = manifest.blocks.map((block) => block.id).join(",");
+  const legacyLayouts = useMemo(
+    () =>
+      collectLegacyLayouts(
+        id,
+        blockIdsKey === "" ? [] : blockIdsKey.split(","),
+      ),
+    [blockIdsKey, id],
+  );
+  const visibleManifest = useMemo(
+    () => migrateLegacyLayout(manifest, legacyLayouts),
+    [legacyLayouts, manifest],
+  );
 
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState(
     "sidebarCollapsed",
@@ -122,8 +211,8 @@ function BlockPageView({
       liveBlockContents.current[blockId] = content;
       const nextContents = { ...liveBlockContents.current, [blockId]: content };
       saveBlockSnapshot(id, {
-        version: manifest.version,
-        blocks: manifest.blocks.map((block) => ({
+        version: visibleManifest.version,
+        blocks: visibleManifest.blocks.map((block) => ({
           ...block,
           content:
             nextContents[block.id] ??
@@ -132,19 +221,24 @@ function BlockPageView({
         })),
       });
     },
-    [id, manifest],
+    [id, visibleManifest],
   );
+
+  useEffect(() => {
+    if (!manifestReady) return;
+    adoptLegacyLayout(legacyLayouts);
+  }, [adoptLegacyLayout, id, legacyLayouts, manifestReady]);
 
   useEffect(() => {
     if (manifestReady) {
       saveCurrentSnapshot();
     }
-  }, [id, manifest, manifestReady]);
+  }, [id, visibleManifest, manifestReady]);
 
   function saveCurrentSnapshot(nextContents = liveBlockContents.current) {
     const snapshot = {
-      version: manifest.version,
-      blocks: manifest.blocks.map((block) => ({
+      version: visibleManifest.version,
+      blocks: visibleManifest.blocks.map((block) => ({
         ...block,
         content:
           nextContents[block.id] ??
@@ -551,7 +645,7 @@ function BlockPageView({
             </Button>
 
             {manifestReady ? (
-              manifest.blocks.map((block) => (
+              visibleManifest.blocks.map((block) => (
                 <BlockEditor
                   key={block.id}
                   pageId={id}
@@ -562,7 +656,11 @@ function BlockPageView({
                   onUpdateBlock={(patch) => {
                     updateBlock(block.id, patch);
                   }}
+                  onUpdateLayout={(layout) => {
+                    updateBlockLayout(block.id, layout);
+                  }}
                   onRemoveBlock={() => {
+                    clearLegacyLayout(id, block.id);
                     removeBlock(block.id);
                   }}
                   onMoveBlock={(dir) => {

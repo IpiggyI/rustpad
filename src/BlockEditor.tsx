@@ -28,9 +28,8 @@ import {
   VscTriangleDown,
   VscTriangleUp,
 } from "react-icons/vsc";
-import useLocalStorageState from "use-local-storage-state";
 
-import type { BlockInfo, MoveDirection } from "./BlockManifest";
+import type { BlockInfo, BlockLayout, MoveDirection } from "./BlockManifest";
 import ImeInput from "./ImeInput";
 import languages from "./languages.json";
 import Rustpad, { UserInfo } from "./rustpad";
@@ -45,6 +44,7 @@ type BlockEditorProps = {
   onUpdateBlock: (
     patch: Partial<Pick<BlockInfo, "title" | "language">>,
   ) => void;
+  onUpdateLayout: (layout: BlockLayout) => void;
   onRemoveBlock: () => void;
   onMoveBlock: (direction: MoveDirection) => void;
   onContentChange: (content: string) => void;
@@ -59,20 +59,16 @@ function BlockEditor({
   wordWrap,
   initialContent,
   onUpdateBlock,
+  onUpdateLayout,
   onRemoveBlock,
   onMoveBlock,
   onContentChange,
   onCopyBlock,
   onExportBlock,
 }: BlockEditorProps) {
-  const storageKey = `block-collapsed:${pageId}:${block.id}`;
-  const [collapsed, setCollapsed] = useLocalStorageState(storageKey, {
-    defaultValue: false,
-  });
-  const heightKey = `block-height:${pageId}:${block.id}`;
-  const [height, setHeight] = useLocalStorageState(heightKey, {
-    defaultValue: 300,
-  });
+  const collapsed = block.collapsed ?? false;
+  const height = block.height ?? 300;
+  const [dragHeight, setDragHeight] = useState<number | null>(null);
   const [connection, setConnection] = useState<
     "connected" | "disconnected" | "desynchronized"
   >("disconnected");
@@ -156,14 +152,15 @@ function BlockEditor({
       e.currentTarget.setPointerCapture(pointerId);
       const startY = e.clientY;
       const startHeight = height;
+      let lastHeight = startHeight;
       document.body.style.userSelect = "none";
       function onMove(ev: PointerEvent) {
         if (ev.pointerId !== pointerId) return;
-        const next = Math.min(
+        lastHeight = Math.min(
           1200,
           Math.max(120, startHeight + ev.clientY - startY),
         );
-        setHeight(next);
+        setDragHeight(lastHeight);
       }
       function onUp(ev: PointerEvent) {
         if (ev.pointerId !== pointerId) return;
@@ -171,12 +168,14 @@ function BlockEditor({
         document.removeEventListener("pointermove", onMove);
         document.removeEventListener("pointerup", onUp);
         document.removeEventListener("pointercancel", onUp);
+        setDragHeight(null);
+        onUpdateLayout({ height: lastHeight });
       }
       document.addEventListener("pointermove", onMove);
       document.addEventListener("pointerup", onUp);
       document.addEventListener("pointercancel", onUp);
     },
-    [height, setHeight],
+    [height, onUpdateLayout],
   );
 
   const connectionColor = {
@@ -214,7 +213,7 @@ function BlockEditor({
           size="xs"
           variant="ghost"
           flexShrink={0}
-          onClick={() => setCollapsed(!collapsed)}
+          onClick={() => onUpdateLayout({ collapsed: !collapsed })}
         />
 
         <Icon
@@ -351,7 +350,7 @@ function BlockEditor({
 
       {!collapsed && (
         <>
-          <Box h={`${height}px`}>
+          <Box h={`${dragHeight ?? height}px`}>
             <Editor
               theme={darkMode ? "vs-dark" : "vs"}
               language={block.language}

@@ -143,6 +143,29 @@ test("save and load keep extra fields on snapshot blocks", () => {
   assert.equal((loaded.blocks[0] as { height?: number }).height, 240);
 });
 
+test("save then load round-trips block height and collapsed", () => {
+  const storage = createMemoryStorage();
+  const input: BlockSnapshot = {
+    version: 1,
+    blocks: [
+      {
+        id: "aaaaaa",
+        title: "Notes",
+        language: "markdown",
+        content: "body",
+        height: 420,
+        collapsed: true,
+      },
+    ],
+  };
+
+  saveBlockSnapshot("page-a", input, storage);
+  const loaded = loadBlockSnapshot("page-a", storage);
+  assert.ok(loaded);
+  assert.equal(loaded.blocks[0].height, 420);
+  assert.equal(loaded.blocks[0].collapsed, true);
+});
+
 test("load returns undefined for corrupt snapshot JSON", () => {
   const storage = createMemoryStorage({
     [`${PREFIX}page-a`]: "{not json",

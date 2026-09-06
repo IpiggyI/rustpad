@@ -2,22 +2,31 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   type BlockInfo,
+  type BlockLayout,
   type Manifest,
   type MoveDirection,
   addBlock as addBlockToManifest,
   createDefaultBlock,
+  migrateLegacyLayout as migrateLegacyLayoutInManifest,
   moveBlock as moveBlockInManifest,
   parseManifest,
   removeBlock as removeBlockFromManifest,
   serializeManifest,
   updateTitle as setManifestTitle,
   updateBlock as updateBlockInManifest,
+  updateBlockLayout as updateBlockLayoutInManifest,
 } from "./manifestOps";
 import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
 
 export { createDefaultBlock };
-export type { BlockInfo, Manifest, MoveDirection } from "./manifestOps";
+export { migrateLegacyLayout, updateBlockLayout } from "./manifestOps";
+export type {
+  BlockInfo,
+  BlockLayout,
+  Manifest,
+  MoveDirection,
+} from "./manifestOps";
 
 export function useManifest(
   pageId: string,
@@ -161,6 +170,22 @@ export function useManifest(
     [updateManifest],
   );
 
+  const updateBlockLayout = useCallback(
+    (blockId: string, layout: BlockLayout) => {
+      updateManifest((prev) =>
+        updateBlockLayoutInManifest(prev, blockId, layout),
+      );
+    },
+    [updateManifest],
+  );
+
+  const migrateLegacyLayout = useCallback(
+    (legacy: Record<string, BlockLayout>) => {
+      updateManifest((prev) => migrateLegacyLayoutInManifest(prev, legacy));
+    },
+    [updateManifest],
+  );
+
   const moveBlock = useCallback(
     (blockId: string, direction: MoveDirection) => {
       updateManifest((prev) => moveBlockInManifest(prev, blockId, direction));
@@ -176,6 +201,8 @@ export function useManifest(
     updateTitle,
     removeBlock,
     updateBlock,
+    updateBlockLayout,
+    migrateLegacyLayout,
     moveBlock,
   };
 }

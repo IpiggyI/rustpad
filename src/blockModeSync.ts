@@ -8,6 +8,8 @@ export type BlockSnapshot = {
     title: string;
     language: string;
     content: string;
+    height?: number;
+    collapsed?: boolean;
   }>;
 };
 

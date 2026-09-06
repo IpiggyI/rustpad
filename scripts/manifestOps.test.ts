@@ -5,11 +5,13 @@ import {
   type BlockInfo,
   type Manifest,
   addBlock,
+  migrateLegacyLayout,
   moveBlock,
   parseManifest,
   removeBlock,
   sanitizeManifest,
   updateBlock,
+  updateBlockLayout,
 } from "../src/manifestOps.ts";
 
 function block(
@@ -43,6 +45,13 @@ function assertUntouched(input: Manifest, before: Manifest) {
 function assertNoChange(result: Manifest, input: Manifest, before: Manifest) {
   assert.deepEqual(result, input);
   assertUntouched(input, before);
+}
+
+function withoutBlock(value: Manifest, blockId: string): Manifest {
+  return {
+    ...value,
+    blocks: value.blocks.filter((block) => block.id !== blockId),
+  };
 }
 
 const a = block("aaaaaa", "A", "markdown");
@@ -349,4 +358,102 @@ test("sanitizeManifest drops illegal and duplicate ids and keeps surviving order
   assert.equal(result.version, 1);
   assert.equal(result.title, "page");
   assertUntouched(input, before);
+});
+
+test("updateBlockLayout changes only the target block and leaves other fields byte-identical", () => {
+  const extra = { ...a, height: 240, collapsed: true };
+  const input = freezeManifest(
+    structuredClone(manifest([extra, b, c], "workspace")),
+  );
+  const before = structuredClone(input);
+  const result = updateBlockLayout(input, "bbbbbb", {
+    height: 420,
+    collapsed: true,
+  });
+  assert.deepEqual(result.blocks[1], {
+    id: "bbbbbb",
+    title: "B",
+    language: "python",
+    height: 420,
+    collapsed: true,
+  });
+  assert.equal(
+    JSON.stringify(withoutBlock(result, "bbbbbb")),
+    JSON.stringify(withoutBlock(input, "bbbbbb")),
+  );
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
+test("updateBlockLayout patches one field and keeps the other layout field", () => {
+  const target = { ...b, height: 300, collapsed: true };
+  const input = freezeManifest(structuredClone(manifest([a, target, c])));
+  const before = structuredClone(input);
+  const result = updateBlockLayout(input, "bbbbbb", { height: 420 });
+  assert.equal(result.blocks[1].height, 420);
+  assert.equal(result.blocks[1].collapsed, true);
+  assert.deepEqual(result.blocks[0], a);
+  assert.deepEqual(result.blocks[2], c);
+  assertUntouched(input, before);
+});
+
+test("updateBlockLayout with a missing id returns the original manifest", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  const result = updateBlockLayout(input, "nope00", { height: 420 });
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
+});
+
+test("updateBlockLayout returns the original manifest when the layout is unchanged", () => {
+  const target = { ...b, height: 420, collapsed: true };
+  const input = freezeManifest(structuredClone(manifest([a, target, c])));
+  const before = structuredClone(input);
+  const result = updateBlockLayout(input, "bbbbbb", {
+    height: 420,
+    collapsed: true,
+  });
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
+});
+
+test("migrateLegacyLayout adopts a legacy value only when the manifest field is missing", () => {
+  const kept = { ...b, height: 500, collapsed: true };
+  const heightOnly = { ...c, height: 360 };
+  const input = freezeManifest(
+    structuredClone(manifest([a, kept, heightOnly], "workspace")),
+  );
+  const before = structuredClone(input);
+  const result = migrateLegacyLayout(input, {
+    aaaaaa: { height: 240, collapsed: true },
+    bbbbbb: { height: 111, collapsed: false },
+    cccccc: { height: 999, collapsed: true },
+    zzzzzz: { height: 100 },
+  });
+  assert.deepEqual(result.blocks[0], {
+    ...a,
+    height: 240,
+    collapsed: true,
+  });
+  assert.deepEqual(result.blocks[1], kept);
+  assert.deepEqual(result.blocks[2], { ...heightOnly, collapsed: true });
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
+test("migrateLegacyLayout returns the original manifest when every present field is already set", () => {
+  const filled = [
+    { ...a, height: 240, collapsed: false },
+    { ...b, height: 500, collapsed: true },
+  ];
+  const input = freezeManifest(structuredClone(manifest(filled)));
+  const before = structuredClone(input);
+  const result = migrateLegacyLayout(input, {
+    aaaaaa: { height: 1, collapsed: true },
+    bbbbbb: { height: 2, collapsed: false },
+  });
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
 });

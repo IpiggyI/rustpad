@@ -2,7 +2,11 @@ export type BlockInfo = {
   id: string;
   title: string;
   language: string;
+  height?: number;
+  collapsed?: boolean;
 };
+
+export type BlockLayout = { height?: number; collapsed?: boolean };
 
 export type Manifest = {
   version: number;
@@ -152,6 +156,58 @@ export function updateBlock(
       b.id === blockId ? { ...b, ...patch } : b,
     ),
   };
+}
+
+function applyLayout(block: BlockInfo, layout: BlockLayout): BlockInfo | null {
+  const next: BlockInfo = { ...block };
+  let changed = false;
+  if (layout.height !== undefined && layout.height !== block.height) {
+    next.height = layout.height;
+    changed = true;
+  }
+  if (layout.collapsed !== undefined && layout.collapsed !== block.collapsed) {
+    next.collapsed = layout.collapsed;
+    changed = true;
+  }
+  return changed ? next : null;
+}
+
+export function updateBlockLayout(
+  manifest: Manifest,
+  blockId: string,
+  layout: BlockLayout,
+): Manifest {
+  const idx = manifest.blocks.findIndex((block) => block.id === blockId);
+  if (idx < 0) return manifest;
+  const nextBlock = applyLayout(manifest.blocks[idx], layout);
+  if (!nextBlock) return manifest;
+  const blocks = [...manifest.blocks];
+  blocks[idx] = nextBlock;
+  return { ...manifest, blocks };
+}
+
+export function migrateLegacyLayout(
+  manifest: Manifest,
+  legacy: Record<string, BlockLayout>,
+): Manifest {
+  let changed = false;
+  const blocks = manifest.blocks.map((block) => {
+    const fromLegacy = legacy[block.id];
+    if (!fromLegacy) return block;
+    const adopted: BlockLayout = {};
+    if (block.height === undefined && fromLegacy.height !== undefined) {
+      adopted.height = fromLegacy.height;
+    }
+    if (block.collapsed === undefined && fromLegacy.collapsed !== undefined) {
+      adopted.collapsed = fromLegacy.collapsed;
+    }
+    const nextBlock = applyLayout(block, adopted);
+    if (!nextBlock) return block;
+    changed = true;
+    return nextBlock;
+  });
+  if (!changed) return manifest;
+  return { ...manifest, blocks };
 }
 
 export function updateTitle(manifest: Manifest, title: string): Manifest {
