@@ -8,7 +8,8 @@
     "check": "tsc",
     "build": "vite build",
     "serve": "vite preview",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test": "node --test scripts/"
   },
   "dependencies": {
     "@chakra-ui/react": "^2.10.4",

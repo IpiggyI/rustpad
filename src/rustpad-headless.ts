@@ -1,5 +1,7 @@
 import { OpSeq } from "rustpad-wasm";
 
+import { diffText } from "./textDiff";
+
 export type RustpadHeadlessOptions = {
   readonly uri: string;
   readonly onConnected?: () => void;
@@ -26,10 +28,6 @@ type ServerMsg = {
   UserCursor?: unknown;
 };
 
-function unicodeLength(str: string): number {
-  return Array.from(str).length;
-}
-
 function applyToString(content: string, operation: OpSeq): string {
   const ops: (string | number)[] = JSON.parse(operation.to_string());
   let result = "";
@@ -49,14 +47,6 @@ function applyToString(content: string, operation: OpSeq): string {
   }
 
   return result;
-}
-
-function buildReplaceOp(oldText: string, newText: string): OpSeq {
-  const oldLen = unicodeLength(oldText);
-  const op = OpSeq.new();
-  op.delete(oldLen);
-  op.insert(newText);
-  return op;
 }
 
 class RustpadHeadless {
@@ -96,7 +86,7 @@ class RustpadHeadless {
 
   replaceContent(newText: string) {
     if (newText === this.content) return;
-    const operation = buildReplaceOp(this.content, newText);
+    const operation = diffText(this.content, newText);
     this.content = newText;
     this.applyClient(operation);
   }
