@@ -8,6 +8,7 @@ import {
   addBlock as addBlockToManifest,
   createDefaultBlock,
   migrateLegacyLayout as migrateLegacyLayoutInManifest,
+  moveBlockBefore as moveBlockBeforeInManifest,
   moveBlock as moveBlockInManifest,
   parseManifest,
   removeBlock as removeBlockFromManifest,
@@ -193,6 +194,15 @@ export function useManifest(
     [updateManifest],
   );
 
+  const moveBlockBefore = useCallback(
+    (blockId: string, beforeId: string | null) => {
+      updateManifest((prev) =>
+        moveBlockBeforeInManifest(prev, blockId, beforeId),
+      );
+    },
+    [updateManifest],
+  );
+
   return {
     manifest,
     connection,
@@ -204,5 +214,6 @@ export function useManifest(
     updateBlockLayout,
     migrateLegacyLayout,
     moveBlock,
+    moveBlockBefore,
   };
 }

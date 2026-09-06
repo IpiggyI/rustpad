@@ -26,6 +26,7 @@ import {
   VscCloudDownload,
   VscCopy,
   VscEllipsis,
+  VscGripper,
   VscTriangleDown,
   VscTriangleUp,
 } from "react-icons/vsc";
@@ -53,6 +54,7 @@ type BlockEditorProps = {
   onContentChange: (content: string) => void;
   onCopyBlock: () => void;
   onExportBlock: () => void;
+  onDragHandlePointerDown: (event: React.PointerEvent) => void;
 };
 
 function BlockEditor({
@@ -68,6 +70,7 @@ function BlockEditor({
   onContentChange,
   onCopyBlock,
   onExportBlock,
+  onDragHandlePointerDown,
 }: BlockEditorProps) {
   const collapsed = block.collapsed ?? false;
   const height = block.height ?? 300;
@@ -274,6 +277,20 @@ function BlockEditor({
         minW={0}
         overflow="hidden"
       >
+        <IconButton
+          aria-label="Reorder block"
+          icon={<Icon as={VscGripper} />}
+          size="xs"
+          variant="ghost"
+          flexShrink={0}
+          cursor="grab"
+          style={{ touchAction: "none" }}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            onDragHandlePointerDown(event);
+          }}
+        />
         <IconButton
           aria-label="Toggle block"
           icon={<Icon as={collapsed ? VscChevronRight : VscChevronDown} />}

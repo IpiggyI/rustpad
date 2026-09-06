@@ -8,6 +8,7 @@ import {
   doesFoldRecordDiffer,
   migrateLegacyLayout,
   moveBlock,
+  moveBlockBefore,
   parseManifest,
   removeBlock,
   sanitizeManifest,
@@ -149,6 +150,79 @@ test("moveBlock with a missing id returns an equivalent manifest", () => {
   assertNoChange(moveBlock(input, "nope00", "down"), input, before);
   assertNoChange(moveBlock(input, "nope00", "top"), input, before);
   assertNoChange(moveBlock(input, "nope00", "bottom"), input, before);
+});
+
+test("moveBlockBefore inserts the target immediately before the reference block", () => {
+  const input = prepared([a, b, c, d]);
+  const before = structuredClone(input);
+  const result = moveBlockBefore(input, "dddddd", "bbbbbb");
+  assert.deepEqual(result.blocks, [a, d, b, c]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
+test("moveBlockBefore moving a later block forward keeps the rest in order", () => {
+  const input = prepared([a, b, c, d]);
+  const before = structuredClone(input);
+  const result = moveBlockBefore(input, "cccccc", "aaaaaa");
+  assert.deepEqual(result.blocks, [c, a, b, d]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
+test("moveBlockBefore with a null reference appends the target at the end", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  const result = moveBlockBefore(input, "aaaaaa", null);
+  assert.deepEqual(result.blocks, [b, c, a]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
+test("moveBlockBefore relocates the target by id and keeps a block another client added", () => {
+  const extra = block("eeeeee", "E", "go");
+  const input = prepared([a, extra, b, c]);
+  const before = structuredClone(input);
+  const result = moveBlockBefore(input, "cccccc", "aaaaaa");
+  assert.deepEqual(result.blocks, [c, a, extra, b]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
+test("moveBlockBefore returns the original manifest when the target is already in place", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  const result = moveBlockBefore(input, "aaaaaa", "bbbbbb");
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
+});
+
+test("moveBlockBefore returns the original manifest when appending a block that is already last", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  const result = moveBlockBefore(input, "cccccc", null);
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
+});
+
+test("moveBlockBefore returns the original manifest when the dragged id is no longer in the manifest", () => {
+  const input = prepared([a, c]);
+  const before = structuredClone(input);
+  const result = moveBlockBefore(input, "bbbbbb", "aaaaaa");
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
+});
+
+test("moveBlockBefore returns the original manifest when the reference id is no longer in the manifest", () => {
+  const input = prepared([a, c]);
+  const before = structuredClone(input);
+  const result = moveBlockBefore(input, "aaaaaa", "bbbbbb");
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
 });
 
 test("addBlock prepends an Untitled block and keeps the rest in order", () => {

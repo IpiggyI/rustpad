@@ -283,3 +283,34 @@ export function moveBlock(
   blocks.splice(target, 0, moved);
   return { ...manifest, blocks };
 }
+
+export function moveBlockBefore(
+  manifest: Manifest,
+  blockId: string,
+  beforeId: string | null,
+): Manifest {
+  const from = manifest.blocks.findIndex((block) => block.id === blockId);
+  if (from < 0) return manifest;
+
+  if (beforeId === null) {
+    if (from === manifest.blocks.length - 1) return manifest;
+    const blocks = [...manifest.blocks];
+    const [moved] = blocks.splice(from, 1);
+    blocks.push(moved);
+    return { ...manifest, blocks };
+  }
+
+  if (beforeId === blockId) return manifest;
+
+  const beforeIndex = manifest.blocks.findIndex(
+    (block) => block.id === beforeId,
+  );
+  if (beforeIndex < 0) return manifest;
+  if (from + 1 === beforeIndex) return manifest;
+
+  const blocks = [...manifest.blocks];
+  const [moved] = blocks.splice(from, 1);
+  const insertAt = blocks.findIndex((block) => block.id === beforeId);
+  blocks.splice(insertAt, 0, moved);
+  return { ...manifest, blocks };
+}

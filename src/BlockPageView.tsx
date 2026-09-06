@@ -16,7 +16,15 @@ import {
   VStack,
   useToast,
 } from "@chakra-ui/react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { Reorder, useDragControls } from "framer-motion";
+import {
+  type ComponentProps,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   VscAdd,
   VscCloudDownload,
@@ -28,6 +36,7 @@ import useLocalStorageState from "use-local-storage-state";
 
 import BlockEditor from "./BlockEditor";
 import {
+  type BlockInfo,
   type BlockLayout,
   Manifest,
   migrateLegacyLayout,
@@ -106,6 +115,33 @@ function clearLegacyLayout(pageId: string, blockId: string): void {
   }
 }
 
+function ReorderableBlock({
+  onReorderEnd,
+  ...editorProps
+}: Omit<ComponentProps<typeof BlockEditor>, "onDragHandlePointerDown"> & {
+  onReorderEnd: (blockId: string) => void;
+}) {
+  const controls = useDragControls();
+  const blockId = editorProps.block.id;
+  return (
+    <Reorder.Item
+      as="div"
+      value={blockId}
+      dragListener={false}
+      dragControls={controls}
+      layout="position"
+      initial={false}
+      style={{ position: "relative", width: "100%", minWidth: 0 }}
+      onDragEnd={() => onReorderEnd(blockId)}
+    >
+      <BlockEditor
+        {...editorProps}
+        onDragHandlePointerDown={(event) => controls.start(event)}
+      />
+    </Reorder.Item>
+  );
+}
+
 function BlockPageView({
   id,
   darkMode,
@@ -153,6 +189,7 @@ function BlockPageView({
     updateBlockLayout,
     migrateLegacyLayout: adoptLegacyLayout,
     moveBlock,
+    moveBlockBefore,
     ready: manifestReady,
   } = useManifest(id, {
     initialManifest: initialManifest.current,
@@ -170,6 +207,51 @@ function BlockPageView({
   const visibleManifest = useMemo(
     () => migrateLegacyLayout(manifest, legacyLayouts),
     [legacyLayouts, manifest],
+  );
+  const blocksRef = useRef(visibleManifest.blocks);
+  blocksRef.current = visibleManifest.blocks;
+  const dragOrderIdsRef = useRef<string[] | null>(null);
+  const snapshotBlocksRef = useRef<Map<string, BlockInfo>>(new Map());
+  const [dragOrderIds, setDragOrderIds] = useState<string[] | null>(null);
+  const orderIds =
+    dragOrderIds ?? visibleManifest.blocks.map((block) => block.id);
+
+  useEffect(() => {
+    dragOrderIdsRef.current = null;
+    snapshotBlocksRef.current = new Map();
+    setDragOrderIds(null);
+  }, [id]);
+
+  const captureBlockSnapshot = useCallback(() => {
+    if (snapshotBlocksRef.current.size === 0) {
+      snapshotBlocksRef.current = new Map(
+        blocksRef.current.map((block) => [block.id, block]),
+      );
+    }
+  }, []);
+
+  const handleReorder = useCallback(
+    (newOrder: string[]) => {
+      captureBlockSnapshot();
+      dragOrderIdsRef.current = newOrder;
+      setDragOrderIds(newOrder);
+    },
+    [captureBlockSnapshot],
+  );
+
+  const handleReorderEnd = useCallback(
+    (blockId: string) => {
+      const ids = dragOrderIdsRef.current;
+      dragOrderIdsRef.current = null;
+      snapshotBlocksRef.current = new Map();
+      setDragOrderIds(null);
+      if (!ids) return;
+      const index = ids.indexOf(blockId);
+      if (index < 0) return;
+      const beforeId = index < ids.length - 1 ? ids[index + 1] : null;
+      moveBlockBefore(blockId, beforeId);
+    },
+    [moveBlockBefore],
   );
 
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState(
@@ -645,36 +727,57 @@ function BlockPageView({
             </Button>
 
             {manifestReady ? (
-              visibleManifest.blocks.map((block) => (
-                <BlockEditor
-                  key={block.id}
-                  pageId={id}
-                  block={block}
-                  darkMode={darkMode}
-                  wordWrap={wordWrap}
-                  initialContent={initialContentByBlock.current[block.id]}
-                  onUpdateBlock={(patch) => {
-                    updateBlock(block.id, patch);
-                  }}
-                  onUpdateLayout={(layout) => {
-                    updateBlockLayout(block.id, layout);
-                  }}
-                  onRemoveBlock={() => {
-                    clearLegacyLayout(id, block.id);
-                    removeBlock(block.id);
-                  }}
-                  onMoveBlock={(dir) => {
-                    moveBlock(block.id, dir);
-                  }}
-                  onContentChange={(content) =>
-                    rememberBlockContent(block.id, content)
-                  }
-                  onCopyBlock={() => handleCopyBlock(block.id, block.title)}
-                  onExportBlock={() =>
-                    handleExportBlock(block.id, block.title, block.language)
-                  }
-                />
-              ))
+              <Reorder.Group
+                as="div"
+                axis="y"
+                values={orderIds}
+                onReorder={handleReorder}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.75rem",
+                  alignItems: "stretch",
+                }}
+              >
+                {orderIds.map((blockId) => {
+                  const block =
+                    visibleManifest.blocks.find(
+                      (entry) => entry.id === blockId,
+                    ) ?? snapshotBlocksRef.current.get(blockId);
+                  if (!block) return null;
+                  return (
+                    <ReorderableBlock
+                      key={block.id}
+                      pageId={id}
+                      block={block}
+                      darkMode={darkMode}
+                      wordWrap={wordWrap}
+                      initialContent={initialContentByBlock.current[block.id]}
+                      onUpdateBlock={(patch) => {
+                        updateBlock(block.id, patch);
+                      }}
+                      onUpdateLayout={(layout) => {
+                        updateBlockLayout(block.id, layout);
+                      }}
+                      onRemoveBlock={() => {
+                        clearLegacyLayout(id, block.id);
+                        removeBlock(block.id);
+                      }}
+                      onMoveBlock={(dir) => {
+                        moveBlock(block.id, dir);
+                      }}
+                      onContentChange={(content) =>
+                        rememberBlockContent(block.id, content)
+                      }
+                      onCopyBlock={() => handleCopyBlock(block.id, block.title)}
+                      onExportBlock={() =>
+                        handleExportBlock(block.id, block.title, block.language)
+                      }
+                      onReorderEnd={handleReorderEnd}
+                    />
+                  );
+                })}
+              </Reorder.Group>
             ) : (
               <Text color={darkMode ? "#888" : "#666"}>
                 Loading workspace...
