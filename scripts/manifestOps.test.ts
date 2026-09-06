@@ -48,6 +48,7 @@ function assertNoChange(result: Manifest, input: Manifest, before: Manifest) {
 const a = block("aaaaaa", "A", "markdown");
 const b = block("bbbbbb", "B", "python");
 const c = block("cccccc", "C", "rust");
+const d = block("dddddd", "D", "javascript");
 
 test("moveBlock up swaps the target with the previous block", () => {
   const input = prepared([a, b, c]);
@@ -69,10 +70,36 @@ test("moveBlock down swaps the target with the next block", () => {
   assertUntouched(input, before);
 });
 
+test("moveBlock top moves the target to the front and keeps the rest in order", () => {
+  const input = prepared([a, b, c, d]);
+  const before = structuredClone(input);
+  const result = moveBlock(input, "cccccc", "top");
+  assert.deepEqual(result.blocks, [c, a, b, d]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
+test("moveBlock bottom moves the target to the end and keeps the rest in order", () => {
+  const input = prepared([a, b, c, d]);
+  const before = structuredClone(input);
+  const result = moveBlock(input, "bbbbbb", "bottom");
+  assert.deepEqual(result.blocks, [a, c, d, b]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
 test("moveBlock up on the first block returns an equivalent manifest", () => {
   const input = prepared([a, b, c]);
   const before = structuredClone(input);
   assertNoChange(moveBlock(input, "aaaaaa", "up"), input, before);
+});
+
+test("moveBlock top on the first block returns an equivalent manifest", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  assertNoChange(moveBlock(input, "aaaaaa", "top"), input, before);
 });
 
 test("moveBlock down on the last block returns an equivalent manifest", () => {
@@ -81,11 +108,19 @@ test("moveBlock down on the last block returns an equivalent manifest", () => {
   assertNoChange(moveBlock(input, "cccccc", "down"), input, before);
 });
 
+test("moveBlock bottom on the last block returns an equivalent manifest", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  assertNoChange(moveBlock(input, "cccccc", "bottom"), input, before);
+});
+
 test("moveBlock on a single-block manifest returns an equivalent manifest", () => {
   const input = prepared([a]);
   const before = structuredClone(input);
   assertNoChange(moveBlock(input, "aaaaaa", "up"), input, before);
   assertNoChange(moveBlock(input, "aaaaaa", "down"), input, before);
+  assertNoChange(moveBlock(input, "aaaaaa", "top"), input, before);
+  assertNoChange(moveBlock(input, "aaaaaa", "bottom"), input, before);
 });
 
 test("moveBlock on an empty manifest returns an equivalent manifest", () => {
@@ -93,6 +128,8 @@ test("moveBlock on an empty manifest returns an equivalent manifest", () => {
   const before = structuredClone(input);
   assertNoChange(moveBlock(input, "aaaaaa", "up"), input, before);
   assertNoChange(moveBlock(input, "aaaaaa", "down"), input, before);
+  assertNoChange(moveBlock(input, "aaaaaa", "top"), input, before);
+  assertNoChange(moveBlock(input, "aaaaaa", "bottom"), input, before);
 });
 
 test("moveBlock with a missing id returns an equivalent manifest", () => {
@@ -100,6 +137,8 @@ test("moveBlock with a missing id returns an equivalent manifest", () => {
   const before = structuredClone(input);
   assertNoChange(moveBlock(input, "nope00", "up"), input, before);
   assertNoChange(moveBlock(input, "nope00", "down"), input, before);
+  assertNoChange(moveBlock(input, "nope00", "top"), input, before);
+  assertNoChange(moveBlock(input, "nope00", "bottom"), input, before);
 });
 
 test("addBlock prepends an Untitled block and keeps the rest in order", () => {

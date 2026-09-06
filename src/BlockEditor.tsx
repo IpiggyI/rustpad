@@ -4,6 +4,11 @@ import {
   HStack,
   Icon,
   IconButton,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
+  Portal,
   Select,
   Text,
 } from "@chakra-ui/react";
@@ -11,18 +16,21 @@ import Editor from "@monaco-editor/react";
 import { editor } from "monaco-editor/esm/vs/editor/editor.api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  VscArrowDown,
+  VscArrowUp,
   VscChevronDown,
   VscChevronRight,
   VscCircleFilled,
   VscClose,
   VscCloudDownload,
   VscCopy,
+  VscEllipsis,
   VscTriangleDown,
   VscTriangleUp,
 } from "react-icons/vsc";
 import useLocalStorageState from "use-local-storage-state";
 
-import type { BlockInfo } from "./BlockManifest";
+import type { BlockInfo, MoveDirection } from "./BlockManifest";
 import ImeInput from "./ImeInput";
 import languages from "./languages.json";
 import Rustpad, { UserInfo } from "./rustpad";
@@ -38,7 +46,7 @@ type BlockEditorProps = {
     patch: Partial<Pick<BlockInfo, "title" | "language">>,
   ) => void;
   onRemoveBlock: () => void;
-  onMoveBlock: (direction: "up" | "down") => void;
+  onMoveBlock: (direction: MoveDirection) => void;
   onContentChange: (content: string) => void;
   onCopyBlock: () => void;
   onExportBlock: () => void;
@@ -178,12 +186,15 @@ function BlockEditor({
   }[connection];
 
   const userCount = Object.keys(users).length;
+  const menuItemBg = darkMode ? "#2d2d2d" : "white";
+  const menuItemActive = { bgColor: darkMode ? "#3a3a3a" : "gray.100" };
 
   return (
     <Box
       border="1px solid"
       borderColor={darkMode ? "#444" : "#ddd"}
       borderRadius="md"
+      minW={0}
       overflow="hidden"
     >
       <Flex
@@ -194,16 +205,24 @@ function BlockEditor({
         borderBottom={collapsed ? "none" : "1px solid"}
         borderColor={darkMode ? "#444" : "#ddd"}
         gap={1}
+        minW={0}
+        overflow="hidden"
       >
         <IconButton
           aria-label="Toggle block"
           icon={<Icon as={collapsed ? VscChevronRight : VscChevronDown} />}
           size="xs"
           variant="ghost"
+          flexShrink={0}
           onClick={() => setCollapsed(!collapsed)}
         />
 
-        <Icon as={VscCircleFilled} color={connectionColor} boxSize={2} />
+        <Icon
+          as={VscCircleFilled}
+          color={connectionColor}
+          boxSize={2}
+          flexShrink={0}
+        />
 
         <ImeInput
           size="xs"
@@ -212,7 +231,10 @@ function BlockEditor({
           fontSize="sm"
           value={block.title}
           onValueChange={(title) => onUpdateBlock({ title })}
+          flex="1 1 0"
+          minW={0}
           maxW="200px"
+          overflow="hidden"
           px={1}
         />
 
@@ -222,7 +244,10 @@ function BlockEditor({
           fontSize="xs"
           value={block.language}
           onChange={(e) => onUpdateBlock({ language: e.target.value })}
+          flex="0 1 7rem"
+          minW={0}
           maxW="120px"
+          overflow="hidden"
           color={darkMode ? "#999" : "#666"}
         >
           {languages.map((lang) => (
@@ -233,12 +258,17 @@ function BlockEditor({
         </Select>
 
         {userCount > 0 && (
-          <Text fontSize="xs" color={darkMode ? "#888" : "#999"} ml={1}>
+          <Text
+            fontSize="xs"
+            color={darkMode ? "#888" : "#999"}
+            ml={1}
+            flexShrink={0}
+          >
             +{userCount}
           </Text>
         )}
 
-        <HStack spacing={0} ml="auto">
+        <HStack spacing={0} ml="auto" flexShrink={0}>
           <IconButton
             aria-label="Copy block content"
             icon={<Icon as={VscCopy} />}
@@ -253,20 +283,61 @@ function BlockEditor({
             variant="ghost"
             onClick={onExportBlock}
           />
-          <IconButton
-            aria-label="Move up"
-            icon={<Icon as={VscTriangleUp} />}
-            size="xs"
-            variant="ghost"
-            onClick={() => onMoveBlock("up")}
-          />
-          <IconButton
-            aria-label="Move down"
-            icon={<Icon as={VscTriangleDown} />}
-            size="xs"
-            variant="ghost"
-            onClick={() => onMoveBlock("down")}
-          />
+          <Menu>
+            <MenuButton
+              as={IconButton}
+              aria-label="More block actions"
+              icon={<Icon as={VscEllipsis} />}
+              size="xs"
+              variant="ghost"
+            />
+            <Portal>
+              <MenuList
+                fontSize="sm"
+                minW="12rem"
+                bgColor={darkMode ? "#2d2d2d" : "white"}
+                borderColor={darkMode ? "#444" : "gray.200"}
+                color={darkMode ? "#cbcaca" : "inherit"}
+              >
+                <MenuItem
+                  icon={<Icon as={VscTriangleUp} />}
+                  bgColor={menuItemBg}
+                  _hover={menuItemActive}
+                  _focus={menuItemActive}
+                  onClick={() => onMoveBlock("up")}
+                >
+                  Move Up
+                </MenuItem>
+                <MenuItem
+                  icon={<Icon as={VscTriangleDown} />}
+                  bgColor={menuItemBg}
+                  _hover={menuItemActive}
+                  _focus={menuItemActive}
+                  onClick={() => onMoveBlock("down")}
+                >
+                  Move Down
+                </MenuItem>
+                <MenuItem
+                  icon={<Icon as={VscArrowUp} />}
+                  bgColor={menuItemBg}
+                  _hover={menuItemActive}
+                  _focus={menuItemActive}
+                  onClick={() => onMoveBlock("top")}
+                >
+                  Move to Top
+                </MenuItem>
+                <MenuItem
+                  icon={<Icon as={VscArrowDown} />}
+                  bgColor={menuItemBg}
+                  _hover={menuItemActive}
+                  _focus={menuItemActive}
+                  onClick={() => onMoveBlock("bottom")}
+                >
+                  Move to Bottom
+                </MenuItem>
+              </MenuList>
+            </Portal>
+          </Menu>
           <IconButton
             aria-label="Remove block"
             icon={<Icon as={VscClose} />}

@@ -161,16 +161,25 @@ export function updateTitle(manifest: Manifest, title: string): Manifest {
   };
 }
 
+export type MoveDirection = "up" | "down" | "top" | "bottom";
+
 export function moveBlock(
   manifest: Manifest,
   blockId: string,
-  direction: "up" | "down",
+  direction: MoveDirection,
 ): Manifest {
   const idx = manifest.blocks.findIndex((b) => b.id === blockId);
   if (idx < 0) return manifest;
-  const target = direction === "up" ? idx - 1 : idx + 1;
-  if (target < 0 || target >= manifest.blocks.length) return manifest;
+  const last = manifest.blocks.length - 1;
+  const target = {
+    up: idx - 1,
+    down: idx + 1,
+    top: 0,
+    bottom: last,
+  }[direction];
+  if (target === idx || target < 0 || target > last) return manifest;
   const blocks = [...manifest.blocks];
-  [blocks[idx], blocks[target]] = [blocks[target], blocks[idx]];
+  const [moved] = blocks.splice(idx, 1);
+  blocks.splice(target, 0, moved);
   return { ...manifest, blocks };
 }

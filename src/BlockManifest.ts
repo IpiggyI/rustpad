@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type BlockInfo,
   type Manifest,
+  type MoveDirection,
   addBlock as addBlockToManifest,
   createDefaultBlock,
   moveBlock as moveBlockInManifest,
@@ -16,7 +17,7 @@ import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
 
 export { createDefaultBlock };
-export type { BlockInfo, Manifest } from "./manifestOps";
+export type { BlockInfo, Manifest, MoveDirection } from "./manifestOps";
 
 export function useManifest(
   pageId: string,
@@ -161,7 +162,7 @@ export function useManifest(
   );
 
   const moveBlock = useCallback(
-    (blockId: string, direction: "up" | "down") => {
+    (blockId: string, direction: MoveDirection) => {
       updateManifest((prev) => moveBlockInManifest(prev, blockId, direction));
     },
     [updateManifest],
