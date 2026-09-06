@@ -116,6 +116,35 @@ test("addBlock prepends an Untitled block and keeps the rest in order", () => {
   assertUntouched(input, before);
 });
 
+test("addBlock with position start prepends and keeps the rest in order", () => {
+  const input = prepared([a, b, c], "workspace");
+  const before = structuredClone(input);
+  const result = addBlock(input, "javascript", "start");
+  assert.equal(result.blocks.length, 4);
+  assert.equal(result.blocks[0].title, "Untitled");
+  assert.equal(result.blocks[0].language, "javascript");
+  assert.equal(/^[a-z0-9]{6}$/.test(result.blocks[0].id), true);
+  assert.deepEqual(result.blocks.slice(1), [a, b, c]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
+test("addBlock with position end appends and keeps the rest in order", () => {
+  const input = prepared([a, b, c], "workspace");
+  const before = structuredClone(input);
+  const result = addBlock(input, "javascript", "end");
+  assert.equal(result.blocks.length, 4);
+  const added = result.blocks[result.blocks.length - 1];
+  assert.equal(added.title, "Untitled");
+  assert.equal(added.language, "javascript");
+  assert.equal(/^[a-z0-9]{6}$/.test(added.id), true);
+  assert.deepEqual(result.blocks.slice(0, -1), [a, b, c]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
 test("addBlock defaults language to plaintext", () => {
   const input = prepared([a]);
   const before = structuredClone(input);

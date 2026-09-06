@@ -130,8 +130,8 @@ export function useManifest(
   );
 
   const addBlock = useCallback(
-    (language: string = "plaintext") => {
-      updateManifest((prev) => addBlockToManifest(prev, language));
+    (language: string = "plaintext", position: "start" | "end" = "start") => {
+      updateManifest((prev) => addBlockToManifest(prev, language, position));
     },
     [updateManifest],
   );

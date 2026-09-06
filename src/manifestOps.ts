@@ -122,10 +122,15 @@ export function createDefaultBlock(language: string = "plaintext"): BlockInfo {
 export function addBlock(
   manifest: Manifest,
   language: string = "plaintext",
+  position: "start" | "end" = "start",
 ): Manifest {
+  const block = createDefaultBlock(language);
   return {
     ...manifest,
-    blocks: [createDefaultBlock(language), ...manifest.blocks],
+    blocks:
+      position === "end"
+        ? [...manifest.blocks, block]
+        : [block, ...manifest.blocks],
   };
 }
 

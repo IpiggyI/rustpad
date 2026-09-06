@@ -582,6 +582,21 @@ function BlockPageView({
                 Loading workspace...
               </Text>
             )}
+
+            {manifest.blocks.length > 0 && (
+              <Button
+                leftIcon={<VscAdd />}
+                size="sm"
+                variant="outline"
+                colorScheme={darkMode ? "whiteAlpha" : "gray"}
+                isDisabled={!manifestReady}
+                onClick={() => {
+                  addBlock(undefined, "end");
+                }}
+              >
+                Add Block
+              </Button>
+            )}
           </VStack>
         </Box>
       </Flex>
