@@ -6,6 +6,7 @@ import {
   type Manifest,
   addBlock,
   doesFoldRecordDiffer,
+  isEmptyFoldRecord,
   migrateLegacyLayout,
   moveBlock,
   moveBlockBefore,
@@ -541,6 +542,15 @@ const sampleFolds = [
     checksum: 42,
   },
 ];
+
+test("isEmptyFoldRecord is true for a missing record and for an empty array", () => {
+  assert.equal(isEmptyFoldRecord(undefined), true);
+  assert.equal(isEmptyFoldRecord([]), true);
+});
+
+test("isEmptyFoldRecord is false for a collapsed-region record", () => {
+  assert.equal(isEmptyFoldRecord(sampleFolds), false);
+});
 
 test("doesFoldRecordDiffer is false when both records are missing", () => {
   assert.equal(doesFoldRecordDiffer(undefined, undefined), false);

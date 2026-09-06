@@ -163,7 +163,7 @@ export function updateBlock(
   };
 }
 
-function isEmptyFoldRecord(value: unknown): boolean {
+export function isEmptyFoldRecord(value: unknown): boolean {
   return value === undefined || (Array.isArray(value) && value.length === 0);
 }
 

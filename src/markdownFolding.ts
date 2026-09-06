@@ -1,5 +1,7 @@
 import type * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 
+import { isEmptyFoldRecord } from "./manifestOps";
+
 type Monaco = typeof monaco;
 
 /** Compute folding ranges for ATX headings (`#` ~ `######`), skipping code fences. */
@@ -90,7 +92,7 @@ export async function restoreFoldRecord(
   ed: monaco.editor.ICodeEditor,
   record: unknown,
 ): Promise<void> {
-  if (record === undefined || (Array.isArray(record) && record.length === 0)) {
+  if (isEmptyFoldRecord(record)) {
     return;
   }
   const model = await waitForFoldingModel(ed);
