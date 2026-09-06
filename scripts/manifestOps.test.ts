@@ -8,6 +8,7 @@ import {
   moveBlock,
   parseManifest,
   removeBlock,
+  sanitizeManifest,
   updateBlock,
 } from "../src/manifestOps.ts";
 
@@ -198,4 +199,86 @@ test("parseManifest returns null for illegal JSON without throwing", () => {
   assert.equal(parseManifest("{"), null);
   assert.equal(parseManifest("not json"), null);
   assert.equal(parseManifest('{"blocks":'), null);
+});
+
+test("parseManifest recovers the first value from concatenated JSON", () => {
+  const first = {
+    version: 1,
+    title: "first",
+    blocks: [a],
+  };
+  const second = {
+    version: 1,
+    title: "second",
+    blocks: [b],
+  };
+  const text = JSON.stringify(first) + JSON.stringify(second);
+  assert.deepEqual(parseManifest(text), first);
+});
+
+test("parseManifest drops blocks with illegal ids and keeps surviving order", () => {
+  const text = JSON.stringify({
+    version: 1,
+    title: "page",
+    blocks: [
+      a,
+      { id: "ABC123", title: "bad-case", language: "plaintext" },
+      { id: "short", title: "short", language: "plaintext" },
+      { id: "toolong1", title: "long", language: "plaintext" },
+      c,
+    ],
+  });
+  assert.deepEqual(parseManifest(text)?.blocks, [a, c]);
+  assert.equal(parseManifest(text)?.title, "page");
+  assert.equal(parseManifest(text)?.version, 1);
+});
+
+test("parseManifest keeps the first block when ids repeat", () => {
+  const duplicate = { id: "aaaaaa", title: "dup", language: "go" };
+  const text = JSON.stringify({
+    version: 1,
+    title: "page",
+    blocks: [a, b, duplicate, c],
+  });
+  assert.deepEqual(parseManifest(text)?.blocks, [a, b, c]);
+});
+
+test("parseManifest returns a legal manifest unchanged", () => {
+  const value = {
+    version: 1,
+    title: "Workspace",
+    blocks: [a, b, c],
+  };
+  assert.deepEqual(parseManifest(JSON.stringify(value)), value);
+});
+
+test("sanitizeManifest returns a legal manifest unchanged", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  const result = sanitizeManifest(input);
+  assert.deepEqual(result.blocks, [a, b, c]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
+test("sanitizeManifest drops illegal and duplicate ids and keeps surviving order", () => {
+  const duplicate = { id: "aaaaaa", title: "dup", language: "go" };
+  const input = freezeManifest(
+    structuredClone(
+      manifest([
+        a,
+        { id: "ABC123", title: "bad-case", language: "plaintext" },
+        b,
+        duplicate,
+        c,
+      ]),
+    ),
+  );
+  const before = structuredClone(input);
+  const result = sanitizeManifest(input);
+  assert.deepEqual(result.blocks, [a, b, c]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
 });

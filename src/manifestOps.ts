@@ -10,6 +10,8 @@ export type Manifest = {
   blocks: BlockInfo[];
 };
 
+const BLOCK_ID = /^[a-z0-9]{6}$/;
+
 function generateBlockId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let id = "";
@@ -19,17 +21,94 @@ function generateBlockId(): string {
   return id;
 }
 
+export function sanitizeManifest(manifest: Manifest): Manifest {
+  const seen = new Set<string>();
+  const blocks: BlockInfo[] = [];
+  for (const entry of manifest.blocks as unknown[]) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const id = (entry as { id?: unknown }).id;
+    if (typeof id !== "string" || !BLOCK_ID.test(id) || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    blocks.push(entry as BlockInfo);
+  }
+  return { ...manifest, blocks };
+}
+
+// Concurrent first-open seeding can concatenate two JSON values ('{...}{...}').
+function recoverFirstJsonValue(text: string): unknown | undefined {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let started = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{" || ch === "[") {
+      started = true;
+      depth++;
+      continue;
+    }
+
+    if (ch === "}" || ch === "]") {
+      if (!started || depth === 0) {
+        return undefined;
+      }
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(0, i + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
 export function parseManifest(text: string): Manifest | null {
   if (!text.trim()) return null;
   try {
-    const parsed = JSON.parse(text);
-    if (parsed && Array.isArray(parsed.blocks)) {
-      return parsed as Manifest;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = recoverFirstJsonValue(text);
+      if (parsed === undefined) return null;
     }
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      !Array.isArray((parsed as Manifest).blocks)
+    ) {
+      return null;
+    }
+    return sanitizeManifest(parsed as Manifest);
   } catch {
-    // corrupted JSON, ignore
+    return null;
   }
-  return null;
 }
 
 export function serializeManifest(manifest: Manifest): string {

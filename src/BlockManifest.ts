@@ -49,6 +49,19 @@ export function useManifest(
   useEffect(() => {
     function initialize(text: string, headless: RustpadHeadless) {
       const parsed = parseManifest(text);
+      if (initialized.current) {
+        // shortcut: rewrite unparseable or non-canonical server text after init because every client derives the same canonical text from the same raw text and replaceContent is a no-op when unchanged; ceiling: character-level OT carrying a structured manifest can only remove syntactic damage, not semantic damage (concurrent drag-reorder, one client deleting a block while another edits its title); replace when: concurrent structural edits are observed to leave a parseable manifest whose block set or order matches neither client's last write
+        if (parsed === null || text !== serializeManifest(parsed)) {
+          headless.replaceContent(
+            serializeManifest(parsed ?? lastValidManifest.current),
+          );
+        }
+        if (parsed) {
+          lastValidManifest.current = parsed;
+          setManifest(parsed);
+        }
+        return;
+      }
       if (parsed && parsed.blocks.length > 0) {
         // Server already holds a manifest: the server is the source of truth.
         // Never overwrite it with the local initial manifest, which would revert
