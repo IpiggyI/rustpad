@@ -142,25 +142,31 @@ function BlockEditor({
   }, [editorInstance]);
 
   const startResize = useCallback(
-    (e: React.MouseEvent) => {
+    (e: React.PointerEvent) => {
       e.preventDefault();
+      const pointerId = e.pointerId;
+      e.currentTarget.setPointerCapture(pointerId);
       const startY = e.clientY;
       const startHeight = height;
       document.body.style.userSelect = "none";
-      function onMove(ev: MouseEvent) {
+      function onMove(ev: PointerEvent) {
+        if (ev.pointerId !== pointerId) return;
         const next = Math.min(
           1200,
           Math.max(120, startHeight + ev.clientY - startY),
         );
         setHeight(next);
       }
-      function onUp() {
+      function onUp(ev: PointerEvent) {
+        if (ev.pointerId !== pointerId) return;
         document.body.style.userSelect = "";
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
       }
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
     },
     [height, setHeight],
   );
@@ -295,7 +301,8 @@ function BlockEditor({
             borderTop="1px solid"
             borderColor={darkMode ? "#444" : "#ddd"}
             _hover={{ bgColor: darkMode ? "#3a3a3a" : "#e2e2e2" }}
-            onMouseDown={startResize}
+            style={{ touchAction: "none" }}
+            onPointerDown={startResize}
             title="Drag to resize"
           />
         </>
