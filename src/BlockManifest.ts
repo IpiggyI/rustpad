@@ -1,49 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  type BlockInfo,
+  type Manifest,
+  addBlock as addBlockToManifest,
+  createDefaultBlock,
+  moveBlock as moveBlockInManifest,
+  parseManifest,
+  removeBlock as removeBlockFromManifest,
+  serializeManifest,
+  updateTitle as setManifestTitle,
+  updateBlock as updateBlockInManifest,
+} from "./manifestOps";
 import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
 
-export type BlockInfo = {
-  id: string;
-  title: string;
-  language: string;
-};
-
-export type Manifest = {
-  version: number;
-  title?: string;
-  blocks: BlockInfo[];
-};
-
-function generateBlockId(): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let id = "";
-  for (let i = 0; i < 6; i++) {
-    id += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return id;
-}
-
-function parseManifest(text: string): Manifest | null {
-  if (!text.trim()) return null;
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed && Array.isArray(parsed.blocks)) {
-      return parsed as Manifest;
-    }
-  } catch {
-    // corrupted JSON, ignore
-  }
-  return null;
-}
-
-function serializeManifest(manifest: Manifest): string {
-  return JSON.stringify(manifest);
-}
-
-export function createDefaultBlock(language: string = "plaintext"): BlockInfo {
-  return { id: generateBlockId(), title: "Untitled", language };
-}
+export { createDefaultBlock };
+export type { BlockInfo, Manifest } from "./manifestOps";
 
 export function useManifest(
   pageId: string,
@@ -145,33 +118,21 @@ export function useManifest(
 
   const addBlock = useCallback(
     (language: string = "plaintext") => {
-      updateManifest((prev) => ({
-        ...prev,
-        blocks: [
-          { id: generateBlockId(), title: "Untitled", language },
-          ...prev.blocks,
-        ],
-      }));
+      updateManifest((prev) => addBlockToManifest(prev, language));
     },
     [updateManifest],
   );
 
   const updateTitle = useCallback(
     (title: string) => {
-      updateManifest((prev) => ({
-        ...prev,
-        title,
-      }));
+      updateManifest((prev) => setManifestTitle(prev, title));
     },
     [updateManifest],
   );
 
   const removeBlock = useCallback(
     (blockId: string) => {
-      updateManifest((prev) => ({
-        ...prev,
-        blocks: prev.blocks.filter((b) => b.id !== blockId),
-      }));
+      updateManifest((prev) => removeBlockFromManifest(prev, blockId));
     },
     [updateManifest],
   );
@@ -181,27 +142,14 @@ export function useManifest(
       blockId: string,
       patch: Partial<Pick<BlockInfo, "title" | "language">>,
     ) => {
-      updateManifest((prev) => ({
-        ...prev,
-        blocks: prev.blocks.map((b) =>
-          b.id === blockId ? { ...b, ...patch } : b,
-        ),
-      }));
+      updateManifest((prev) => updateBlockInManifest(prev, blockId, patch));
     },
     [updateManifest],
   );
 
   const moveBlock = useCallback(
     (blockId: string, direction: "up" | "down") => {
-      updateManifest((prev) => {
-        const idx = prev.blocks.findIndex((b) => b.id === blockId);
-        if (idx < 0) return prev;
-        const target = direction === "up" ? idx - 1 : idx + 1;
-        if (target < 0 || target >= prev.blocks.length) return prev;
-        const blocks = [...prev.blocks];
-        [blocks[idx], blocks[target]] = [blocks[target], blocks[idx]];
-        return { ...prev, blocks };
-      });
+      updateManifest((prev) => moveBlockInManifest(prev, blockId, direction));
     },
     [updateManifest],
   );
