@@ -61,6 +61,24 @@ test("does not split a UTF-16 surrogate pair at a prefix boundary", () => {
   assert.equal(insertedText(op), "😁");
 });
 
+test("does not split a UTF-16 surrogate pair at a suffix boundary", () => {
+  // 😀 is U+1F600 (D83D DE00) and 🨀 is U+1FA00 (D83E DE00). They share a
+  // low surrogate, so a naive UTF-16 suffix would start between the pair.
+  const oldText = "keep😀end🎉";
+  const newText = "keep🨀end🎉";
+  const lowOffset = "keep😀".length - 1;
+  assert.equal(oldText.charCodeAt(lowOffset), 0xde00);
+  assert.equal(newText.charCodeAt(lowOffset), 0xde00);
+  assert.notEqual(
+    oldText.charCodeAt(lowOffset - 1),
+    newText.charCodeAt(lowOffset - 1),
+  );
+
+  const op = diffText(oldText, newText);
+  assert.equal(insertedText(op), "🨀");
+  assertRoundTrip(oldText, newText);
+});
+
 test("changing one manifest numeric field yields a small insert", () => {
   const blocks = Array.from({ length: 19 }, (_, i) => ({
     id: `id${String(i).padStart(4, "0")}`,
