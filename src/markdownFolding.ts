@@ -62,6 +62,7 @@ type FoldingModelHandle = {
 
 type FoldingContribution = monaco.editor.IEditorContribution & {
   getFoldingModel(): Promise<FoldingModelHandle | null> | null;
+  foldingModel?: FoldingModelHandle | null;
 };
 
 async function waitForFoldingModel(
@@ -81,20 +82,35 @@ async function waitForFoldingModel(
   return model;
 }
 
+function mementoFromHandle(
+  model: FoldingModelHandle | null | undefined,
+): unknown {
+  if (!model) return undefined;
+  const memento = model.getMemento();
+  return memento === undefined ? [] : memento;
+}
+
 export async function readFoldRecord(
   ed: monaco.editor.ICodeEditor,
 ): Promise<unknown> {
-  const model = await waitForFoldingModel(ed);
-  return model?.getMemento();
+  return mementoFromHandle(await waitForFoldingModel(ed));
+}
+
+/** Live folding-model memento; used on unmount where a debounce must not be dropped. */
+export function readFoldRecordSync(ed: monaco.editor.ICodeEditor): unknown {
+  const contribution = ed.getContribution<FoldingContribution>(
+    FOLDING_CONTRIBUTION_ID,
+  );
+  return mementoFromHandle(contribution?.foldingModel);
 }
 
 export async function restoreFoldRecord(
   ed: monaco.editor.ICodeEditor,
   record: unknown,
 ): Promise<void> {
-  if (isEmptyFoldRecord(record)) {
+  const model = await waitForFoldingModel(ed);
+  if (!model || isEmptyFoldRecord(record)) {
     return;
   }
-  const model = await waitForFoldingModel(ed);
-  model?.applyMemento(record);
+  model.applyMemento(record);
 }

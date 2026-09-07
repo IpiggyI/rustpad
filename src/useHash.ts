@@ -15,19 +15,38 @@ export type HashInfo =
   | { mode: "single"; id: string }
   | { mode: "blocks"; id: string };
 
+export type ParsedHash =
+  | { type: "empty" }
+  | { type: "page"; id: string }
+  | { type: "folds" }
+  | { type: "single"; id: string };
+
 const PAGE_PREFIX = "page:";
+const FOLDS_PREFIX = "folds:";
+
+export function parseHashString(raw: string): ParsedHash {
+  if (!raw) return { type: "empty" };
+  if (raw.startsWith(PAGE_PREFIX)) {
+    return { type: "page", id: raw.slice(PAGE_PREFIX.length) };
+  }
+  if (raw.startsWith(FOLDS_PREFIX)) {
+    return { type: "folds" };
+  }
+  return { type: "single", id: raw };
+}
 
 function parseHash(): HashInfo {
-  if (!window.location.hash) {
-    const id = generateId();
-    window.history.replaceState(null, "", "#" + id);
-    return { mode: "single", id };
+  const raw = window.location.hash ? window.location.hash.slice(1) : "";
+  const parsed = parseHashString(raw);
+  if (parsed.type === "page") {
+    return { mode: "blocks", id: parsed.id };
   }
-  const raw = window.location.hash.slice(1);
-  if (raw.startsWith(PAGE_PREFIX)) {
-    return { mode: "blocks", id: raw.slice(PAGE_PREFIX.length) };
+  if (parsed.type === "single") {
+    return { mode: "single", id: parsed.id };
   }
-  return { mode: "single", id: raw };
+  const id = generateId();
+  window.history.replaceState(null, "", "#" + id);
+  return { mode: "single", id };
 }
 
 export function useHashInfo(): HashInfo {

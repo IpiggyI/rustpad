@@ -195,6 +195,21 @@ export function doesFoldRecordDiffer(next: unknown, saved: unknown): boolean {
   return !jsonValuesAreEqual(next, saved);
 }
 
+/**
+ * Persist after restore when the live record differs.
+ * `undefined` means the memento could not be read; do not wipe `saved`.
+ * `[]` is a real cleared folding-model read and may replace `saved`.
+ */
+export function shouldPersistSingleDocFolds(
+  next: unknown,
+  saved: unknown,
+  restoring: boolean,
+): boolean {
+  if (restoring) return false;
+  if (next === undefined) return false;
+  return doesFoldRecordDiffer(next, saved);
+}
+
 function applyLayout(block: BlockInfo, layout: BlockLayout): BlockInfo | null {
   const next: BlockInfo = { ...block };
   let changed = false;

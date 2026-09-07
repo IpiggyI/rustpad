@@ -8,6 +8,7 @@ import {
   useToast,
 } from "@chakra-ui/react";
 import Editor from "@monaco-editor/react";
+import debounce from "lodash.debounce";
 import { editor } from "monaco-editor/esm/vs/editor/editor.api";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -25,7 +26,27 @@ import Sidebar from "./Sidebar";
 import animals from "./animals.json";
 import languageExtensions from "./extensions";
 import languages from "./languages.json";
+import { shouldPersistSingleDocFolds } from "./manifestOps";
+import {
+  readFoldRecord,
+  readFoldRecordSync,
+  restoreFoldRecord,
+} from "./markdownFolding";
 import Rustpad, { UserInfo } from "./rustpad";
+import RustpadHeadless from "./rustpad-headless";
+import {
+  type FoldMap,
+  type FoldSidecarState,
+  applyFoldSidecarText,
+  foldMementoForFlush,
+  foldsSidecarId,
+  loadAllLocalFolds,
+  loadSingleDocFolds,
+  mergeFoldLanguage,
+  persistSingleDocFolds,
+  serializeFoldMap,
+  writeFoldMapToCache,
+} from "./singleDocFolds";
 import { getWsUri } from "./useHash";
 
 function generateName() {
@@ -71,6 +92,25 @@ function SingleDocView({
   );
   const rustpad = useRef<Rustpad>();
   const pendingDocumentTitle = useRef<string>();
+  const [contentReadyId, setContentReadyId] = useState<string | null>(null);
+  const [languageReadyId, setLanguageReadyId] = useState<string | null>(null);
+  const lastSavedFoldsRef = useRef<unknown>(undefined);
+  const lastSessionMementoRef = useRef<unknown>(undefined);
+  const restoringFoldsRef = useRef(false);
+  const foldsHeadlessRef = useRef<RustpadHeadless>();
+  const foldMapRef = useRef<FoldMap>({});
+  const sidecarStateRef = useRef<FoldSidecarState>({
+    initialized: false,
+    lastValid: {},
+  });
+  const editorRef = useRef(editor);
+  const sessionLanguageRef = useRef(language);
+  const contentReadyIdRef = useRef(contentReadyId);
+  const languageReadyIdRef = useRef(languageReadyId);
+  editorRef.current = editor;
+  sessionLanguageRef.current = language;
+  contentReadyIdRef.current = contentReadyId;
+  languageReadyIdRef.current = languageReadyId;
 
   const [readCodeConfirmOpen, setReadCodeConfirmOpen] = useState(false);
 
@@ -90,6 +130,7 @@ function SingleDocView({
         onConnected: () => {
           setConnection("connected");
         },
+        onReady: () => setContentReadyId(id),
         onDisconnected: () => setConnection("disconnected"),
         onDesynchronized: () => {
           setConnection("desynchronized");
@@ -103,6 +144,7 @@ function SingleDocView({
         onChangeLanguage: (language) => {
           if (languages.includes(language)) {
             setLanguage(language);
+            setLanguageReadyId(id);
           }
         },
         onChangeTitle: (title) => {
@@ -119,6 +161,7 @@ function SingleDocView({
       return () => {
         rustpad.current?.dispose();
         rustpad.current = undefined;
+        setContentReadyId((current) => (current === id ? null : current));
       };
     }
   }, [id, editor, toast, setUsers]);
@@ -132,6 +175,124 @@ function SingleDocView({
   useEffect(() => {
     editor?.updateOptions({ wordWrap: wordWrap ? "on" : "off" });
   }, [editor, wordWrap]);
+
+  useEffect(() => {
+    sidecarStateRef.current = { initialized: false, lastValid: {} };
+    foldMapRef.current = {};
+
+    function handleSidecarText(text: string, headless: RustpadHeadless) {
+      const result = applyFoldSidecarText(
+        text,
+        sidecarStateRef.current,
+        loadAllLocalFolds(id),
+      );
+      sidecarStateRef.current = result.state;
+      foldMapRef.current = result.state.lastValid;
+      if (result.writeText !== undefined) {
+        headless.replaceContent(result.writeText);
+      }
+      writeFoldMapToCache(id, result.state.lastValid);
+      const ed = editorRef.current;
+      if (
+        !ed ||
+        contentReadyIdRef.current !== id ||
+        languageReadyIdRef.current !== id
+      ) {
+        return;
+      }
+      const record = result.state.lastValid[sessionLanguageRef.current];
+      lastSavedFoldsRef.current = record;
+      restoringFoldsRef.current = true;
+      void restoreFoldRecord(ed, record).finally(() => {
+        restoringFoldsRef.current = false;
+      });
+    }
+
+    const headless = new RustpadHeadless({
+      uri: getWsUri(foldsSidecarId(id)),
+      onContentReady: (text) => handleSidecarText(text, headless),
+      onContentChanged: (text) => handleSidecarText(text, headless),
+    });
+    foldsHeadlessRef.current = headless;
+    return () => {
+      headless.dispose();
+      foldsHeadlessRef.current = undefined;
+      sidecarStateRef.current = { initialized: false, lastValid: {} };
+      foldMapRef.current = {};
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!editor || contentReadyId !== id || languageReadyId !== id) {
+      return;
+    }
+
+    const sessionLanguage = language;
+    let cancelled = false;
+    restoringFoldsRef.current = true;
+    lastSavedFoldsRef.current = sidecarStateRef.current.initialized
+      ? foldMapRef.current[sessionLanguage]
+      : loadSingleDocFolds(id, sessionLanguage);
+    lastSessionMementoRef.current = undefined;
+
+    const commitSessionFolds = (next: unknown, restoring: boolean) => {
+      const saved = lastSavedFoldsRef.current;
+      const shouldWrite = shouldPersistSingleDocFolds(next, saved, restoring);
+      lastSavedFoldsRef.current = persistSingleDocFolds(
+        id,
+        sessionLanguage,
+        next,
+        saved,
+        shouldWrite,
+      );
+      if (!shouldWrite || next === undefined) return;
+      if (!sidecarStateRef.current.initialized) return;
+      const map = mergeFoldLanguage(foldMapRef.current, sessionLanguage, next);
+      foldMapRef.current = map;
+      sidecarStateRef.current = { initialized: true, lastValid: map };
+      foldsHeadlessRef.current?.replaceContent(serializeFoldMap(map));
+    };
+
+    const persist = debounce(() => {
+      if (cancelled || restoringFoldsRef.current) return;
+      if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
+      void readFoldRecord(editor).then((next) => {
+        if (cancelled || restoringFoldsRef.current) return;
+        if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
+        commitSessionFolds(next, restoringFoldsRef.current);
+      });
+    }, 200);
+
+    const hiddenAreas = editor.onDidChangeHiddenAreas(() => {
+      if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
+      const live = readFoldRecordSync(editor);
+      if (live !== undefined) lastSessionMementoRef.current = live;
+      persist();
+    });
+
+    void restoreFoldRecord(editor, lastSavedFoldsRef.current).finally(() => {
+      if (!cancelled) {
+        restoringFoldsRef.current = false;
+        persist.cancel();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      hiddenAreas.dispose();
+      const restoring = restoringFoldsRef.current;
+      persist.cancel();
+      // Mode switch unmounts this view; write the session-language memento so a pending debounce cannot drop a fold.
+      const next = foldMementoForFlush(
+        editor.getModel()?.getLanguageId(),
+        sessionLanguage,
+        readFoldRecordSync(editor),
+        lastSessionMementoRef.current,
+      );
+      commitSessionFolds(next, restoring);
+      restoringFoldsRef.current = false;
+    };
+  }, [contentReadyId, editor, id, language, languageReadyId]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev);
@@ -190,6 +351,7 @@ function SingleDocView({
 
   function handleLanguageChange(language: string) {
     setLanguage(language);
+    setLanguageReadyId(id);
     if (rustpad.current?.setLanguage(language)) {
       toast({
         title: "Language updated",
