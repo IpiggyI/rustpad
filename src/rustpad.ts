@@ -6,6 +6,7 @@ import type {
 } from "monaco-editor/esm/vs/editor/editor.api";
 import { OpSeq } from "rustpad-wasm";
 
+import { type FoldingImeHold, attachFoldingImeHold } from "./markdownFolding";
 import { diffText } from "./textDiff";
 
 /** Options passed in to the Rustpad constructor. */
@@ -39,6 +40,7 @@ class Rustpad {
   private readonly onSelectionHandle: IDisposable;
   private readonly onCompositionStartHandle: IDisposable;
   private readonly onCompositionEndHandle: IDisposable;
+  private readonly foldingImeHold: FoldingImeHold;
   private readonly beforeUnload: (event: BeforeUnloadEvent) => void;
   private readonly tryConnectId: number;
   private readonly resetFailuresId: number;
@@ -67,11 +69,14 @@ class Rustpad {
     this.onChangeHandle = options.editor.onDidChangeModelContent(() =>
       this.onChange(),
     );
+    this.foldingImeHold = attachFoldingImeHold(options.editor);
     this.onCompositionStartHandle = options.editor.onDidCompositionStart(() => {
       this.composing = true;
+      this.foldingImeHold.start();
     });
     this.onCompositionEndHandle = options.editor.onDidCompositionEnd(() => {
       this.composing = false;
+      this.foldingImeHold.end();
       this.updateCursors();
     });
     const cursorUpdate = debounce(() => this.sendCursorData(), 20);
@@ -109,6 +114,7 @@ class Rustpad {
     this.onSelectionHandle.dispose();
     this.onCursorHandle.dispose();
     this.onChangeHandle.dispose();
+    this.foldingImeHold.dispose();
     this.onCompositionEndHandle.dispose();
     this.onCompositionStartHandle.dispose();
     window.removeEventListener("beforeunload", this.beforeUnload);

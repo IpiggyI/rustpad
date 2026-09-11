@@ -26,8 +26,12 @@ import Sidebar from "./Sidebar";
 import animals from "./animals.json";
 import languageExtensions from "./extensions";
 import languages from "./languages.json";
-import { shouldPersistSingleDocFolds } from "./manifestOps";
 import {
+  doesFoldRecordDiffer,
+  shouldPersistSingleDocFolds,
+} from "./manifestOps";
+import {
+  isFoldingImeHeld,
   readFoldRecord,
   readFoldRecordSync,
   restoreFoldRecord,
@@ -38,7 +42,7 @@ import {
   type FoldMap,
   type FoldSidecarState,
   applyFoldSidecarText,
-  foldMementoForFlush,
+  flushFoldMementoOnUnmount,
   foldsSidecarId,
   loadAllLocalFolds,
   loadSingleDocFolds,
@@ -201,7 +205,12 @@ function SingleDocView({
         return;
       }
       const record = result.state.lastValid[sessionLanguageRef.current];
+      if (!doesFoldRecordDiffer(record, lastSavedFoldsRef.current)) {
+        lastSavedFoldsRef.current = record;
+        return;
+      }
       lastSavedFoldsRef.current = record;
+      if (isFoldingImeHeld(ed)) return;
       restoringFoldsRef.current = true;
       void restoreFoldRecord(ed, record).finally(() => {
         restoringFoldsRef.current = false;
@@ -234,10 +243,20 @@ function SingleDocView({
       ? foldMapRef.current[sessionLanguage]
       : loadSingleDocFolds(id, sessionLanguage);
     lastSessionMementoRef.current = undefined;
+    const restoreAbort = new AbortController();
 
-    const commitSessionFolds = (next: unknown, restoring: boolean) => {
+    const commitSessionFolds = (
+      next: unknown,
+      restoring: boolean,
+      composing: boolean = false,
+    ) => {
       const saved = lastSavedFoldsRef.current;
-      const shouldWrite = shouldPersistSingleDocFolds(next, saved, restoring);
+      const shouldWrite = shouldPersistSingleDocFolds(
+        next,
+        saved,
+        restoring,
+        composing,
+      );
       lastSavedFoldsRef.current = persistSingleDocFolds(
         id,
         sessionLanguage,
@@ -255,22 +274,33 @@ function SingleDocView({
 
     const persist = debounce(() => {
       if (cancelled || restoringFoldsRef.current) return;
+      if (isFoldingImeHeld(editor)) return;
       if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
       void readFoldRecord(editor).then((next) => {
         if (cancelled || restoringFoldsRef.current) return;
+        if (isFoldingImeHeld(editor)) return;
         if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
-        commitSessionFolds(next, restoringFoldsRef.current);
+        commitSessionFolds(
+          next,
+          restoringFoldsRef.current,
+          isFoldingImeHeld(editor),
+        );
       });
     }, 200);
 
     const hiddenAreas = editor.onDidChangeHiddenAreas(() => {
+      if (isFoldingImeHeld(editor)) return;
       if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
       const live = readFoldRecordSync(editor);
       if (live !== undefined) lastSessionMementoRef.current = live;
       persist();
     });
 
-    void restoreFoldRecord(editor, lastSavedFoldsRef.current).finally(() => {
+    void restoreFoldRecord(
+      editor,
+      lastSavedFoldsRef.current,
+      restoreAbort.signal,
+    ).finally(() => {
       if (!cancelled) {
         restoringFoldsRef.current = false;
         persist.cancel();
@@ -279,11 +309,11 @@ function SingleDocView({
 
     return () => {
       cancelled = true;
+      restoreAbort.abort();
       hiddenAreas.dispose();
       const restoring = restoringFoldsRef.current;
-      persist.cancel();
-      // Mode switch unmounts this view; write the session-language memento so a pending debounce cannot drop a fold.
-      const next = foldMementoForFlush(
+      const next = flushFoldMementoOnUnmount(
+        persist,
         editor.getModel()?.getLanguageId(),
         sessionLanguage,
         readFoldRecordSync(editor),

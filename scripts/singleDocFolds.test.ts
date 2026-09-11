@@ -5,6 +5,7 @@ import { shouldPersistSingleDocFolds } from "../src/manifestOps.ts";
 import {
   type FoldStorage,
   applyFoldSidecarText,
+  flushFoldMementoOnUnmount,
   foldMementoForFlush,
   foldsSidecarId,
   loadAllLocalFolds,
@@ -99,6 +100,20 @@ test("storage key includes document id and language", () => {
   );
   assert.equal(singleDocFoldsKey("doc-a", "xml"), "single-doc:folds:doc-a:xml");
   assert.equal(singleDocFoldsLegacyKey("doc-a"), "single-doc:folds:doc-a");
+});
+
+test("saveSingleDocFolds does not store undefined as []", () => {
+  const storage = createMemoryStorage();
+  saveSingleDocFolds("doc-a", "json", undefined, storage);
+  assert.equal(storage.getItem("single-doc:folds:doc-a:json"), null);
+  assert.equal(storage.writes.length, 0);
+});
+
+test("shouldPersist is false while composing", () => {
+  assert.equal(
+    shouldPersistSingleDocFolds(sampleFolds, undefined, false, true),
+    false,
+  );
 });
 
 test("save then load round-trips a fold memento at single-doc:folds:${id}:${language}", () => {
@@ -290,6 +305,42 @@ test("flush falls back to the last session memento when the live read is unreada
     foldMementoForFlush(undefined, "xml", xmlFolds, jsonFolds),
     jsonFolds,
   );
+});
+
+test("unread flush keeps saved; a real clear flush is []", () => {
+  assert.deepEqual(
+    foldMementoForFlush("markdown", "markdown", undefined, sampleFolds),
+    sampleFolds,
+  );
+  assert.deepEqual(
+    foldMementoForFlush("markdown", "markdown", [], sampleFolds),
+    [],
+  );
+});
+
+test("block-style unmount: debounce cancelled, last-good still flushed", () => {
+  let cancelled = false;
+  let debouncedWrite = false;
+  const persist = {
+    cancel() {
+      cancelled = true;
+    },
+    flush() {
+      if (!cancelled) debouncedWrite = true;
+    },
+  };
+  const next = flushFoldMementoOnUnmount(
+    persist,
+    "markdown",
+    "markdown",
+    undefined,
+    sampleFolds,
+  );
+  persist.flush();
+  assert.equal(cancelled, true);
+  assert.equal(debouncedWrite, false);
+  assert.deepEqual(next, sampleFolds);
+  assert.equal(shouldPersistSingleDocFolds(next, undefined, false), true);
 });
 
 test("persist writes only when the fold record differs", () => {

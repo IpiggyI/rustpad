@@ -60,11 +60,17 @@ class RustpadHeadless {
   private revision: number = 0;
   private outstanding?: OpSeq;
   private buffer?: OpSeq;
+  private outstandingSent: boolean = false;
+  private disposing: boolean = false;
+  private closed: boolean = false;
 
   private content: string = "";
   private contentReady: boolean = false;
 
-  constructor(readonly options: RustpadHeadlessOptions) {
+  readonly options: RustpadHeadlessOptions;
+
+  constructor(options: RustpadHeadlessOptions) {
+    this.options = options;
     const interval = options.reconnectInterval ?? 1000;
     this.tryConnect();
     this.tryConnectId = window.setInterval(() => this.tryConnect(), interval);
@@ -74,10 +80,11 @@ class RustpadHeadless {
     );
   }
 
-  dispose() {
+  dispose(): Promise<void> {
+    this.disposing = true;
     window.clearInterval(this.tryConnectId);
     window.clearInterval(this.resetFailuresId);
-    this.ws?.close();
+    return this.flushThenClose();
   }
 
   getContent(): string {
@@ -92,7 +99,7 @@ class RustpadHeadless {
   }
 
   private tryConnect() {
-    if (this.connecting || this.ws) return;
+    if (this.connecting || this.ws || this.closed) return;
     this.connecting = true;
     const ws = new WebSocket(this.options.uri);
     ws.onopen = () => {
@@ -106,6 +113,7 @@ class RustpadHeadless {
     ws.onclose = () => {
       if (this.ws) {
         this.ws = undefined;
+        if (this.disposing) return;
         this.options.onDisconnected?.();
         if (++this.recentFailures >= 5) {
           this.dispose();
@@ -159,6 +167,7 @@ class RustpadHeadless {
     }
     this.outstanding = this.buffer;
     this.buffer = undefined;
+    this.outstandingSent = false;
     if (this.outstanding) {
       this.sendOperation(this.outstanding);
     }
@@ -190,8 +199,53 @@ class RustpadHeadless {
   }
 
   private sendOperation(operation: OpSeq) {
+    if (!this.ws) return;
     const op = operation.to_string();
-    this.ws?.send(`{"Edit":{"revision":${this.revision},"operation":${op}}}`);
+    this.ws.send(`{"Edit":{"revision":${this.revision},"operation":${op}}}`);
+    this.outstandingSent = true;
+  }
+
+  private waitForSocket(timeoutMs: number): Promise<boolean> {
+    if (this.ws) return Promise.resolve(true);
+    this.tryConnect();
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const id = window.setInterval(() => {
+        if (this.ws) {
+          window.clearInterval(id);
+          resolve(true);
+        } else if (Date.now() - started >= timeoutMs) {
+          window.clearInterval(id);
+          resolve(false);
+        }
+      }, 10);
+    });
+  }
+
+  private async flushThenClose(): Promise<void> {
+    try {
+      if (this.buffer || (this.outstanding && !this.outstandingSent)) {
+        const timeoutMs = Math.min(
+          this.options.reconnectInterval ?? 1000,
+          1000,
+        );
+        await this.waitForSocket(timeoutMs);
+      }
+      if (!this.ws) return;
+      if (this.outstanding && !this.outstandingSent) {
+        this.sendOperation(this.outstanding);
+      }
+      if (this.buffer) {
+        const revision = this.outstanding ? this.revision + 1 : this.revision;
+        const op = this.buffer.to_string();
+        this.ws.send(`{"Edit":{"revision":${revision},"operation":${op}}}`);
+        this.buffer = undefined;
+      }
+    } finally {
+      this.closed = true;
+      this.ws?.close();
+      this.ws = undefined;
+    }
   }
 
   private applyOperation(operation: OpSeq) {

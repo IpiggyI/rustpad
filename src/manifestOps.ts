@@ -199,13 +199,15 @@ export function doesFoldRecordDiffer(next: unknown, saved: unknown): boolean {
  * Persist after restore when the live record differs.
  * `undefined` means the memento could not be read; do not wipe `saved`.
  * `[]` is a real cleared folding-model read and may replace `saved`.
+ * Restoring and IME composition both skip persist (shared guard).
  */
 export function shouldPersistSingleDocFolds(
   next: unknown,
   saved: unknown,
   restoring: boolean,
+  composing: boolean = false,
 ): boolean {
-  if (restoring) return false;
+  if (restoring || composing) return false;
   if (next === undefined) return false;
   return doesFoldRecordDiffer(next, saved);
 }

@@ -139,11 +139,12 @@ export function saveSingleDocFolds(
   record: unknown,
   storage?: FoldStorage,
 ): void {
+  // Unread (undefined) must not be stored as [] — that would look like a user unfold-all.
+  if (record === undefined) return;
   try {
-    const stored = record === undefined ? [] : record;
     resolveStorage(storage).setItem(
       singleDocFoldsKey(id, language),
-      JSON.stringify(stored),
+      JSON.stringify(record),
     );
   } catch {
     // Fold cache must never interrupt editing.
@@ -227,6 +228,23 @@ export function foldMementoForFlush(
     return liveMemento;
   }
   return lastSessionMemento;
+}
+
+/** Cancel a pending persist debounce; last-good still has to land on unmount. */
+export function flushFoldMementoOnUnmount(
+  persist: { cancel(): void },
+  modelLanguage: string | undefined,
+  sessionLanguage: string,
+  liveMemento: unknown,
+  lastGood: unknown,
+): unknown {
+  persist.cancel();
+  return foldMementoForFlush(
+    modelLanguage,
+    sessionLanguage,
+    liveMemento,
+    lastGood,
+  );
 }
 
 /**

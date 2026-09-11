@@ -34,9 +34,18 @@ import {
 import type { BlockInfo, BlockLayout, MoveDirection } from "./BlockManifest";
 import ImeInput from "./ImeInput";
 import languages from "./languages.json";
-import { doesFoldRecordDiffer } from "./manifestOps";
-import { readFoldRecord, restoreFoldRecord } from "./markdownFolding";
+import {
+  doesFoldRecordDiffer,
+  shouldPersistSingleDocFolds,
+} from "./manifestOps";
+import {
+  isFoldingImeHeld,
+  readFoldRecord,
+  readFoldRecordSync,
+  restoreFoldRecord,
+} from "./markdownFolding";
 import Rustpad, { UserInfo } from "./rustpad";
+import { flushFoldMementoOnUnmount } from "./singleDocFolds";
 import { getWsUri } from "./useHash";
 
 type BlockEditorProps = {
@@ -91,6 +100,7 @@ function BlockEditor({
   const onUpdateLayoutRef = useRef(onUpdateLayout);
   const foldsRef = useRef(block.folds);
   const lastSavedFoldsRef = useRef(block.folds);
+  const lastGoodFoldsRef = useRef<unknown>(undefined);
   const restoringFoldsRef = useRef(false);
   useEffect(() => {
     onContentChangeRef.current = onContentChange;
@@ -166,24 +176,42 @@ function BlockEditor({
 
     let cancelled = false;
     restoringFoldsRef.current = true;
+    lastGoodFoldsRef.current = undefined;
+    const restoreAbort = new AbortController();
 
     const persist = debounce(() => {
       if (cancelled || restoringFoldsRef.current) return;
+      if (isFoldingImeHeld(editorInstance)) return;
       void readFoldRecord(editorInstance).then((next) => {
         if (cancelled || restoringFoldsRef.current) return;
+        if (isFoldingImeHeld(editorInstance)) return;
         if (!editorInstance.getModel()) return;
-        if (!doesFoldRecordDiffer(next, lastSavedFoldsRef.current)) return;
-        const stored = next === undefined ? [] : next;
-        lastSavedFoldsRef.current = stored;
-        onUpdateLayoutRef.current({ folds: stored });
+        if (
+          !shouldPersistSingleDocFolds(
+            next,
+            lastSavedFoldsRef.current,
+            restoringFoldsRef.current,
+          )
+        ) {
+          return;
+        }
+        lastSavedFoldsRef.current = next;
+        onUpdateLayoutRef.current({ folds: next });
       });
     }, 200);
 
     const hiddenAreas = editorInstance.onDidChangeHiddenAreas(() => {
+      if (isFoldingImeHeld(editorInstance)) return;
+      const live = readFoldRecordSync(editorInstance);
+      if (live !== undefined) lastGoodFoldsRef.current = live;
       persist();
     });
 
-    void restoreFoldRecord(editorInstance, foldsRef.current).finally(() => {
+    void restoreFoldRecord(
+      editorInstance,
+      foldsRef.current,
+      restoreAbort.signal,
+    ).finally(() => {
       if (!cancelled) {
         restoringFoldsRef.current = false;
         persist.cancel();
@@ -192,11 +220,25 @@ function BlockEditor({
 
     return () => {
       cancelled = true;
-      restoringFoldsRef.current = false;
-      persist.cancel();
+      restoreAbort.abort();
+      const restoring = restoringFoldsRef.current;
       hiddenAreas.dispose();
+      const next = flushFoldMementoOnUnmount(
+        persist,
+        editorInstance.getModel()?.getLanguageId(),
+        block.language,
+        readFoldRecordSync(editorInstance),
+        lastGoodFoldsRef.current,
+      );
+      if (
+        shouldPersistSingleDocFolds(next, lastSavedFoldsRef.current, restoring)
+      ) {
+        lastSavedFoldsRef.current = next;
+        onUpdateLayoutRef.current({ folds: next });
+      }
+      restoringFoldsRef.current = false;
     };
-  }, [collapsed, contentReady, editorInstance]);
+  }, [block.language, collapsed, contentReady, editorInstance]);
 
   useEffect(() => {
     if (!editorInstance || collapsed || !contentReady) return;
@@ -205,13 +247,17 @@ function BlockEditor({
       return;
     }
     lastSavedFoldsRef.current = block.folds;
-    let cancelled = false;
+    const restoreAbort = new AbortController();
     restoringFoldsRef.current = true;
-    void restoreFoldRecord(editorInstance, block.folds).finally(() => {
-      if (!cancelled) restoringFoldsRef.current = false;
+    void restoreFoldRecord(
+      editorInstance,
+      block.folds,
+      restoreAbort.signal,
+    ).finally(() => {
+      if (!restoreAbort.signal.aborted) restoringFoldsRef.current = false;
     });
     return () => {
-      cancelled = true;
+      restoreAbort.abort();
     };
   }, [block.folds, collapsed, contentReady, editorInstance]);
 
