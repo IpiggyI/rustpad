@@ -9,6 +9,20 @@ import { OpSeq } from "rustpad-wasm";
 import { type FoldingImeHold, attachFoldingImeHold } from "./markdownFolding";
 import { diffText } from "./textDiff";
 
+const SYNC_TIMEOUT_MS = 10_000;
+
+type SyncWaiter = {
+  readonly resolve: () => void;
+  readonly reject: (error: Error) => void;
+  readonly timeoutId: number;
+  readonly requireReady: boolean;
+};
+
+const stoppedEditorOptions = new WeakMap<
+  editor.IStandaloneCodeEditor,
+  { readOnly: boolean; domReadOnly: boolean }
+>();
+
 /** Options passed in to the Rustpad constructor. */
 export type RustpadOptions = {
   readonly uri: string;
@@ -44,6 +58,12 @@ class Rustpad {
   private readonly beforeUnload: (event: BeforeUnloadEvent) => void;
   private readonly tryConnectId: number;
   private readonly resetFailuresId: number;
+  private connectingSocket?: WebSocket;
+  private stopping: boolean = false;
+  private disposed: boolean = false;
+  private disposePromise?: Promise<void>;
+  private syncFailure?: Error;
+  private readonly syncWaiters = new Set<SyncWaiter>();
 
   // Client-server state
   private me: number = -1;
@@ -64,6 +84,11 @@ class Rustpad {
   private oldDecorations: string[] = [];
 
   constructor(readonly options: RustpadOptions) {
+    const stoppedOptions = stoppedEditorOptions.get(options.editor);
+    if (stoppedOptions && options.editor.getDomNode()) {
+      options.editor.updateOptions(stoppedOptions);
+      stoppedEditorOptions.delete(options.editor);
+    }
     this.model = options.editor.getModel()!;
     this.lastValue = this.model.getValue();
     this.onChangeHandle = options.editor.onDidChangeModelContent(() =>
@@ -107,18 +132,122 @@ class Rustpad {
     );
   }
 
-  /** Destroy this Rustpad instance and close any sockets. */
-  dispose() {
-    window.clearInterval(this.tryConnectId);
-    window.clearInterval(this.resetFailuresId);
+  /** Wait for the server to acknowledge all local edits currently in flight. */
+  waitForSync(): Promise<void> {
+    return this.waitForDrain(true);
+  }
+
+  private waitForDrain(requireReady: boolean): Promise<void> {
+    if (this.syncFailure) return Promise.reject(this.syncFailure);
+    if ((!requireReady || this.ready) && !this.outstanding && !this.buffer) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      const waiter: SyncWaiter = {
+        resolve,
+        reject,
+        requireReady,
+        timeoutId: window.setTimeout(() => {
+          this.syncWaiters.delete(waiter);
+          reject(
+            new Error(
+              "Timed out waiting for the server to acknowledge edits. Copy any unsaved editor text manually, then reload the page.",
+            ),
+          );
+        }, SYNC_TIMEOUT_MS),
+      };
+      this.syncWaiters.add(waiter);
+    });
+  }
+
+  /** Stop editor input, drain acknowledged edits, and close this Rustpad. */
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
+
+    if (this.options.editor.getDomNode() && !this.model.isDisposed()) {
+      const rawOptions = this.options.editor.getRawOptions();
+      stoppedEditorOptions.set(this.options.editor, {
+        readOnly: rawOptions.readOnly ?? false,
+        domReadOnly: rawOptions.domReadOnly ?? false,
+      });
+      this.options.editor.updateOptions({ readOnly: true, domReadOnly: true });
+      this.onChange();
+    }
+    this.stopping = true;
     this.onSelectionHandle.dispose();
     this.onCursorHandle.dispose();
     this.onChangeHandle.dispose();
     this.foldingImeHold.dispose();
     this.onCompositionEndHandle.dispose();
     this.onCompositionStartHandle.dispose();
+
+    if (
+      (this.outstanding || this.buffer) &&
+      (!this.ws || this.ws.readyState !== WebSocket.OPEN)
+    ) {
+      this.failSync(
+        new Error(
+          "The connection closed before the server acknowledged edits. Copy any unsaved editor text manually, then reload the page.",
+        ),
+      );
+    }
+
+    this.disposePromise = (async () => {
+      try {
+        await this.waitForDrain(false);
+      } catch (error) {
+        const syncError =
+          error instanceof Error ? error : new Error(String(error));
+        this.failSync(syncError);
+        throw syncError;
+      } finally {
+        this.finishDispose();
+      }
+    })();
+    return this.disposePromise;
+  }
+
+  private finishDispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    window.clearInterval(this.tryConnectId);
+    window.clearInterval(this.resetFailuresId);
     window.removeEventListener("beforeunload", this.beforeUnload);
-    this.ws?.close();
+    const ws = this.ws;
+    this.ws = undefined;
+    ws?.close();
+    this.connectingSocket?.close();
+    this.connectingSocket = undefined;
+    this.connecting = false;
+    const error = new Error(
+      "Rustpad was disposed before synchronization completed.",
+    );
+    this.syncWaiters.forEach((waiter) => {
+      window.clearTimeout(waiter.timeoutId);
+      waiter.reject(error);
+    });
+    this.syncWaiters.clear();
+  }
+
+  private resolveSyncWaiters() {
+    if (this.outstanding || this.buffer) return;
+    this.syncWaiters.forEach((waiter) => {
+      if (waiter.requireReady && !this.ready) return;
+      window.clearTimeout(waiter.timeoutId);
+      waiter.resolve();
+      this.syncWaiters.delete(waiter);
+    });
+  }
+
+  private failSync(error: Error, terminal = true) {
+    if (terminal && !this.syncFailure) this.syncFailure = error;
+    const failure = this.syncFailure ?? error;
+    this.syncWaiters.forEach((waiter) => {
+      window.clearTimeout(waiter.timeoutId);
+      waiter.reject(failure);
+    });
+    this.syncWaiters.clear();
   }
 
   /** Try to set the language of the editor, if connected. */
@@ -152,38 +281,68 @@ class Rustpad {
    * to falsy values.
    */
   private tryConnect() {
-    if (this.connecting || this.ws) return;
+    if (this.stopping || this.disposed || this.connecting || this.ws) return;
     this.connecting = true;
     const ws = new WebSocket(this.options.uri);
+    this.connectingSocket = ws;
     ws.onopen = () => {
+      if (this.disposed) {
+        ws.close();
+        return;
+      }
       this.connecting = false;
+      this.connectingSocket = undefined;
       this.ws = ws;
-      this.options.onConnected?.();
+      if (!this.stopping) this.options.onConnected?.();
       this.users = {};
-      this.options.onChangeUsers?.(this.users);
-      this.sendInfo();
-      this.sendPendingTitle();
-      this.sendCursorData();
+      if (!this.stopping) {
+        this.options.onChangeUsers?.(this.users);
+        this.sendInfo();
+        this.sendPendingTitle();
+        this.sendCursorData();
+      }
       if (this.outstanding) {
         this.sendOperation(this.outstanding);
       }
     };
     ws.onclose = () => {
-      if (this.ws) {
+      if (this.ws === ws) {
         this.ws = undefined;
-        this.options.onDisconnected?.();
+        if (!this.stopping) this.options.onDisconnected?.();
+        if (
+          (this.outstanding || this.buffer) &&
+          (this.stopping || this.syncWaiters.size > 0)
+        ) {
+          const terminal = this.stopping || this.disposed;
+          this.failSync(
+            new Error(
+              terminal
+                ? "The connection closed before the server acknowledged edits. Copy any unsaved editor text manually, then reload the page."
+                : "The connection closed before the server acknowledged edits. Retry after reconnecting.",
+            ),
+            terminal,
+          );
+        }
         if (++this.recentFailures >= 5) {
           // If we disconnect 5 times within 15 reconnection intervals, then the
           // client is likely desynchronized and needs to refresh.
-          this.dispose();
+          this.failSync(
+            new Error(
+              "The server repeatedly disconnected before edits synced.",
+            ),
+          );
+          void this.dispose().catch((error) => {
+            console.error("Failed to dispose desynchronized Rustpad", error);
+          });
           this.options.onDesynchronized?.();
         }
-      } else {
+      } else if (this.connectingSocket === ws) {
+        this.connectingSocket = undefined;
         this.connecting = false;
       }
     };
     ws.onmessage = ({ data }) => {
-      if (typeof data === "string") {
+      if (!this.disposed && typeof data === "string") {
         this.handleMessage(JSON.parse(data));
       }
     };
@@ -211,13 +370,16 @@ class Rustpad {
       }
       this.markReady();
     } else if (msg.Language !== undefined) {
+      if (this.stopping) return;
       this.options.onChangeLanguage?.(msg.Language);
     } else if (msg.Title !== undefined) {
+      if (this.stopping) return;
       if (this.pendingTitle === msg.Title) {
         this.pendingTitle = undefined;
       }
       this.options.onChangeTitle?.(msg.Title);
     } else if (msg.UserInfo !== undefined) {
+      if (this.stopping) return;
       const { id, info } = msg.UserInfo;
       if (id !== this.me) {
         this.users = { ...this.users };
@@ -231,6 +393,7 @@ class Rustpad {
         this.options.onChangeUsers?.(this.users);
       }
     } else if (msg.UserCursor !== undefined) {
+      if (this.stopping) return;
       const { id, data } = msg.UserCursor;
       if (id !== this.me) {
         this.userCursors[id] = data;
@@ -242,7 +405,8 @@ class Rustpad {
   private markReady() {
     if (this.ready) return;
     this.ready = true;
-    this.options.onReady?.();
+    if (!this.stopping) this.options.onReady?.();
+    this.resolveSyncWaiters();
   }
 
   private serverAck() {
@@ -255,6 +419,7 @@ class Rustpad {
     if (this.outstanding) {
       this.sendOperation(this.outstanding);
     }
+    this.resolveSyncWaiters();
   }
 
   private applyServer(operation: OpSeq) {
@@ -268,7 +433,7 @@ class Rustpad {
         operation = pair.second();
       }
     }
-    this.applyOperation(operation);
+    if (!this.stopping) this.applyOperation(operation);
   }
 
   private applyClient(operation: OpSeq) {
@@ -435,7 +600,7 @@ class Rustpad {
   }
 
   private onChange() {
-    if (this.ignoreChanges) return;
+    if (this.stopping || this.ignoreChanges || this.model.isDisposed()) return;
 
     // Rebuild the operation by diffing the previous value against the current
     // model value, rather than trusting Monaco's `event.changes`. On mobile,

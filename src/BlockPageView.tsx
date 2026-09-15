@@ -10,6 +10,7 @@ import {
   Input,
   InputGroup,
   InputRightElement,
+  Select,
   Stack,
   Switch,
   Text,
@@ -47,12 +48,18 @@ import Footer from "./Footer";
 import ImeInput from "./ImeInput";
 import { loadBlockSnapshot, saveBlockSnapshot } from "./blockModeSync";
 import {
+  type BlockPresentation,
+  loadBlockPresentation,
+  saveBlockPresentation,
+} from "./blockPresentation";
+import {
   chooseReplacementBlockId,
   loadCurrentBlockId,
   resolveCurrentBlockId,
   saveCurrentBlockId,
 } from "./currentBlock";
 import languageExtensions from "./extensions";
+import type Rustpad from "./rustpad";
 import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
 
@@ -135,9 +142,15 @@ function ReorderableBlock({
       value={blockId}
       dragListener={false}
       dragControls={controls}
-      layout="position"
+      layout={editorProps.single ? undefined : "position"}
       initial={false}
-      style={{ position: "relative", width: "100%", minWidth: 0 }}
+      style={{
+        position: editorProps.single ? "absolute" : "relative",
+        top: editorProps.single ? 0 : undefined,
+        width: "100%",
+        minWidth: 0,
+        pointerEvents: "none",
+      }}
       onDragEnd={() => onReorderEnd(blockId)}
     >
       <BlockEditor
@@ -202,6 +215,29 @@ function BlockPageView({
     initialManifest: initialManifest.current,
   });
   const liveBlockContents = useRef<Record<string, string>>({});
+  const blockClients = useRef(new Map<string, Rustpad>());
+  const registerClient = useCallback((blockId: string, client?: Rustpad) => {
+    if (client) blockClients.current.set(blockId, client);
+    else blockClients.current.delete(blockId);
+  }, []);
+  const [presentation, setPresentation] = useState(() =>
+    loadBlockPresentation(id),
+  );
+  const single = presentation === "single";
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const [singleBodyHeight, setSingleBodyHeight] = useState(400);
+  useEffect(() => {
+    setPresentation(loadBlockPresentation(id));
+  }, [id]);
+  useEffect(() => {
+    const area = scrollAreaRef.current;
+    if (!area) return;
+    const observer = new ResizeObserver(() => {
+      setSingleBodyHeight(Math.max(120, area.clientHeight - 138));
+    });
+    observer.observe(area);
+    return () => observer.disconnect();
+  }, []);
   const currentBlockIdRef = useRef<string | null>(null);
   const lastOrderRef = useRef<string[]>([]);
   const lastPageIdRef = useRef<string | null>(null);
@@ -252,6 +288,17 @@ function BlockPageView({
     },
     [commitCurrentBlock],
   );
+
+  useEffect(() => {
+    if (!currentBlockId) return;
+    const frame = requestAnimationFrame(() => {
+      const panel = document.querySelector(
+        `[data-block-panel="${CSS.escape(currentBlockId)}"]`,
+      );
+      panel?.scrollIntoView({ block: "start", inline: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [currentBlockId, presentation]);
 
   useEffect(() => {
     if (!manifestReady) return;
@@ -394,12 +441,13 @@ function BlockPageView({
     return snapshot;
   }
 
-  function resolveBlockContent(
+  async function resolveBlockContent(
     blockId: string,
     blockTitle: string,
   ): Promise<string> {
-    const live = liveBlockContents.current[blockId];
-    if (live !== undefined) return Promise.resolve(live);
+    const client = blockClients.current.get(blockId);
+    if (!client) throw new Error(`Block is not ready: ${blockTitle}`);
+    await client.waitForSync();
 
     return new Promise<string>((resolve, reject) => {
       let finished = false;
@@ -407,29 +455,25 @@ function BlockPageView({
       const headless = new RustpadHeadless({
         uri: getWsUri(docId),
         onContentReady: (content) => finish(content),
-        onDesynchronized: () => fallback(),
+        onDisconnected: () => fail(),
+        onDesynchronized: () => fail(),
       });
-      const timeoutId = window.setTimeout(() => fallback(), exportTimeoutMs);
+      const timeoutId = window.setTimeout(() => fail(), exportTimeoutMs);
 
       function finish(content: string) {
         if (finished) return;
         finished = true;
         window.clearTimeout(timeoutId);
-        headless.dispose();
+        void headless.dispose();
         resolve(content);
       }
 
-      function fallback() {
+      function fail() {
         if (finished) return;
         finished = true;
         window.clearTimeout(timeoutId);
-        headless.dispose();
-        const cached = initialContentByBlock.current[blockId];
-        if (cached !== undefined) {
-          resolve(cached);
-        } else {
-          reject(new Error(`Failed to read block: ${blockTitle}`));
-        }
+        void headless.dispose();
+        reject(new Error(`Failed to read block: ${blockTitle}`));
       }
     });
   }
@@ -800,9 +844,32 @@ function BlockPageView({
             ({manifestReady ? manifest.blocks.length : 0} block
             {manifestReady && manifest.blocks.length === 1 ? "" : "s"})
           </Text>
+          <Select
+            aria-label="Block presentation"
+            size="xs"
+            w="auto"
+            value={presentation}
+            onChange={(event) => {
+              const next = event.target.value as BlockPresentation;
+              setPresentation(next);
+              saveBlockPresentation(id, next);
+            }}
+          >
+            <option value="single">Single block</option>
+            <option value="stacked">Stacked blocks</option>
+          </Select>
         </HStack>
 
-        <Box flex={1} overflowY="auto" px={4} py={2} data-block-scroll="">
+        <Box
+          ref={scrollAreaRef}
+          flex={1}
+          minH={0}
+          overflowY="auto"
+          px={4}
+          py={2}
+          data-block-scroll=""
+          data-presentation={presentation}
+        >
           <VStack spacing={3} align="stretch">
             <Button
               leftIcon={<VscAdd />}
@@ -824,6 +891,8 @@ function BlockPageView({
                 values={orderIds}
                 onReorder={handleReorder}
                 style={{
+                  position: "relative",
+                  minHeight: single ? singleBodyHeight + 34 : undefined,
                   display: "flex",
                   flexDirection: "column",
                   gap: "0.75rem",
@@ -841,6 +910,10 @@ function BlockPageView({
                       key={block.id}
                       pageId={id}
                       block={block}
+                      single={single}
+                      active={!single || block.id === currentBlockId}
+                      singleBodyHeight={singleBodyHeight}
+                      onClientChange={registerClient}
                       darkMode={darkMode}
                       wordWrap={wordWrap}
                       initialContent={initialContentByBlock.current[block.id]}

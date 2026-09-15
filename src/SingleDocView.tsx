@@ -129,7 +129,7 @@ function SingleDocView({
       const model = editor.getModel()!;
       model.setValue("");
       model.setEOL(0); // LF
-      rustpad.current = new Rustpad({
+      const client = new Rustpad({
         uri: getWsUri(id),
         editor,
         onConnected: () => {
@@ -160,12 +160,25 @@ function SingleDocView({
         },
         onChangeUsers: setUsers,
       });
+      rustpad.current = client;
       if (pendingDocumentTitle.current !== undefined) {
-        rustpad.current.setTitle(pendingDocumentTitle.current);
+        client.setTitle(pendingDocumentTitle.current);
       }
       return () => {
-        rustpad.current?.dispose();
-        rustpad.current = undefined;
+        if (rustpad.current === client) rustpad.current = undefined;
+        void client.dispose().catch((error) => {
+          console.error("Failed to dispose Rustpad client", error);
+          toast({
+            title: "Some changes were not saved",
+            description:
+              error instanceof Error
+                ? error.message
+                : "The server did not confirm the latest changes.",
+            status: "error",
+            duration: null,
+            isClosable: true,
+          });
+        });
         setContentReadyId((current) => (current === id ? null : current));
       };
     }

@@ -166,6 +166,9 @@ function trackSnapshots(payload) {
 
 async function openPage(context, pageId) {
   const page = await context.newPage();
+  await page.addInitScript((id) => {
+    localStorage.setItem(`blockPresentation:page:${id}`, "stacked");
+  }, pageId);
   await page.goto(`${base}/#page:${pageId}`);
   await page.evaluate(() =>
     document.querySelector("vite-error-overlay")?.remove(),

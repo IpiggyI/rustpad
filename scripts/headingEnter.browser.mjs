@@ -200,7 +200,10 @@ try {
     const context = await browser.newContext();
     const url = `${base}/#${mode === "block" ? "page:" : ""}heading-enter-${mode}-${Date.now()}`;
     const page = await open(context, url);
-    await page.locator("select").first().selectOption("markdown");
+    await page
+      .locator(mode === "block" ? "[data-block-panel] select" : "select")
+      .first()
+      .selectOption("markdown");
     const peer = await open(context, url);
     for (const scenario of [
       {

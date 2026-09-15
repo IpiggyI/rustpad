@@ -11,11 +11,18 @@ import {
   Portal,
   Select,
   Text,
+  useToast,
 } from "@chakra-ui/react";
 import Editor from "@monaco-editor/react";
 import debounce from "lodash.debounce";
 import { editor } from "monaco-editor/esm/vs/editor/editor.api";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   VscArrowDown,
   VscArrowUp,
@@ -53,6 +60,10 @@ import { getWsUri } from "./useHash";
 type BlockEditorProps = {
   pageId: string;
   block: BlockInfo;
+  single: boolean;
+  active: boolean;
+  singleBodyHeight: number;
+  onClientChange: (blockId: string, client?: Rustpad) => void;
   darkMode: boolean;
   wordWrap: boolean;
   initialContent?: string;
@@ -72,6 +83,10 @@ type BlockEditorProps = {
 function BlockEditor({
   pageId,
   block,
+  single,
+  active,
+  singleBodyHeight,
+  onClientChange,
   darkMode,
   wordWrap,
   initialContent,
@@ -86,6 +101,13 @@ function BlockEditor({
   onDragHandlePointerDown,
 }: BlockEditorProps) {
   const collapsed = block.collapsed ?? false;
+  const toast = useToast();
+  const wantsBodyVisible = active && (single || !collapsed);
+  const [bodyVisible, setBodyVisible] = useState(wantsBodyVisible);
+  const composingRef = useRef(false);
+  const wantsBodyVisibleRef = useRef(wantsBodyVisible);
+  wantsBodyVisibleRef.current = wantsBodyVisible;
+  const scrollPositionRef = useRef<editor.INewScrollPosition>();
   const height = block.height ?? DEFAULT_BLOCK_BODY_HEIGHT;
   const [dragHeight, setDragHeight] = useState<number | null>(null);
   const [connection, setConnection] = useState<
@@ -117,16 +139,8 @@ function BlockEditor({
   const docId = `page:${pageId}:block:${block.id}`;
 
   useEffect(() => {
-    if (collapsed) {
-      rustpad.current?.dispose();
-      rustpad.current = undefined;
-      setConnection("disconnected");
-    }
-  }, [collapsed]);
-
-  useEffect(() => {
     setContentReady(false);
-    if (editorInstance?.getModel() && !collapsed) {
+    if (editorInstance?.getModel()) {
       const model = editorInstance.getModel()!;
       // Connect with an empty model and let the server History sync the real
       // document first; only seed the local snapshot content via onReady when
@@ -137,7 +151,7 @@ function BlockEditor({
       model.setValue("");
       model.setEOL(0);
       onContentChangeRef.current(model.getValue());
-      rustpad.current = new Rustpad({
+      const client = new Rustpad({
         uri: getWsUri(docId),
         editor: editorInstance,
         onConnected: () => setConnection("connected"),
@@ -156,13 +170,72 @@ function BlockEditor({
         onDesynchronized: () => setConnection("desynchronized"),
         onChangeUsers: setUsers,
       });
+      rustpad.current = client;
+      onClientChange(block.id, client);
       return () => {
-        rustpad.current?.dispose();
+        onClientChange(block.id);
+        void client.dispose().catch((error: unknown) => {
+          console.error("Failed to close block connection", error);
+          toast({
+            title: "Block sync failed",
+            description:
+              error instanceof Error
+                ? error.message
+                : "Pending edits could not be confirmed.",
+            status: "error",
+            duration: null,
+            isClosable: true,
+          });
+        });
         rustpad.current = undefined;
         setContentReady(false);
       };
     }
-  }, [docId, editorInstance, collapsed, initialContent]);
+  }, [docId, editorInstance, initialContent, block.id, onClientChange, toast]);
+
+  useEffect(() => {
+    if (!editorInstance) return;
+    const start = editorInstance.onDidCompositionStart(() => {
+      composingRef.current = true;
+    });
+    const end = editorInstance.onDidCompositionEnd(() => {
+      composingRef.current = false;
+      setBodyVisible(wantsBodyVisibleRef.current);
+    });
+    return () => {
+      start.dispose();
+      end.dispose();
+    };
+  }, [editorInstance]);
+
+  useLayoutEffect(() => {
+    if (!wantsBodyVisible && composingRef.current) {
+      const input = editorInstance
+        ?.getDomNode()
+        ?.querySelector<HTMLElement>("textarea, [contenteditable=true]");
+      // Native blur commits composition; keep the body visible until Monaco ends it.
+      input?.blur();
+      return;
+    }
+    setBodyVisible(wantsBodyVisible);
+  }, [editorInstance, wantsBodyVisible]);
+
+  useLayoutEffect(() => {
+    if (!editorInstance) return;
+    if (bodyVisible) {
+      editorInstance.layout();
+      if (scrollPositionRef.current)
+        editorInstance.setScrollPosition(scrollPositionRef.current);
+    }
+    return () => {
+      if (bodyVisible && editorInstance.getModel()) {
+        scrollPositionRef.current = {
+          scrollTop: editorInstance.getScrollTop(),
+          scrollLeft: editorInstance.getScrollLeft(),
+        };
+      }
+    };
+  }, [bodyVisible, editorInstance, single, singleBodyHeight, height]);
 
   useEffect(() => {
     editorInstance?.updateOptions({ wordWrap: wordWrap ? "on" : "off" });
@@ -181,7 +254,7 @@ function BlockEditor({
   }, [editorInstance]);
 
   useEffect(() => {
-    if (!editorInstance || collapsed || !contentReady) return;
+    if (!editorInstance || !contentReady) return;
 
     let cancelled = false;
     restoringFoldsRef.current = true;
@@ -247,10 +320,10 @@ function BlockEditor({
       }
       restoringFoldsRef.current = false;
     };
-  }, [block.language, collapsed, contentReady, editorInstance]);
+  }, [block.language, contentReady, editorInstance]);
 
   useEffect(() => {
-    if (!editorInstance || collapsed || !contentReady) return;
+    if (!editorInstance || !contentReady) return;
     if (!doesFoldRecordDiffer(block.folds, lastSavedFoldsRef.current)) {
       lastSavedFoldsRef.current = block.folds;
       return;
@@ -268,7 +341,7 @@ function BlockEditor({
     return () => {
       restoreAbort.abort();
     };
-  }, [block.folds, collapsed, contentReady, editorInstance]);
+  }, [block.folds, contentReady, editorInstance]);
 
   const startResize = useCallback(
     (e: React.PointerEvent) => {
@@ -316,6 +389,9 @@ function BlockEditor({
   return (
     <Box
       data-block-panel={block.id}
+      visibility={!active && !bodyVisible ? "hidden" : "visible"}
+      pointerEvents={active || bodyVisible ? "auto" : "none"}
+      position="relative"
       border="1px solid"
       borderColor={darkMode ? "#444" : "#ddd"}
       borderRadius="md"
@@ -327,7 +403,7 @@ function BlockEditor({
         px={2}
         align="center"
         bgColor={darkMode ? "#2d2d2d" : "#f0f0f0"}
-        borderBottom={collapsed ? "none" : "1px solid"}
+        borderBottom={single || !collapsed ? "1px solid" : "none"}
         borderColor={darkMode ? "#444" : "#ddd"}
         gap={1}
         minW={0}
@@ -488,37 +564,41 @@ function BlockEditor({
         </HStack>
       </Flex>
 
-      {!collapsed && (
-        <>
-          <Box h={`${dragHeight ?? height}px`}>
-            <Editor
-              theme={darkMode ? "vs-dark" : "vs"}
-              language={block.language}
-              path={`rustpad-block://${pageId}/${block.id}`}
-              options={{
-                automaticLayout: true,
-                fontSize: 13,
-                scrollBeyondLastLine: false,
-                showFoldingControls: "always",
-              }}
-              onMount={(ed, monaco) => {
-                attachHeadingEnter(ed, monaco);
-                setEditorInstance(ed);
-              }}
-            />
-          </Box>
-          <Box
-            h="6px"
-            cursor="ns-resize"
-            bgColor={darkMode ? "#2d2d2d" : "#f0f0f0"}
-            borderTop="1px solid"
-            borderColor={darkMode ? "#444" : "#ddd"}
-            _hover={{ bgColor: darkMode ? "#3a3a3a" : "#e2e2e2" }}
-            style={{ touchAction: "none" }}
-            onPointerDown={startResize}
-            title="Drag to resize"
-          />
-        </>
+      <Box
+        data-block-body={block.id}
+        h={`${single ? singleBodyHeight : (dragHeight ?? height)}px`}
+        w="100%"
+        position={!single && !bodyVisible ? "absolute" : "relative"}
+        visibility={bodyVisible ? "visible" : "hidden"}
+      >
+        <Editor
+          theme={darkMode ? "vs-dark" : "vs"}
+          language={block.language}
+          path={`rustpad-block://${pageId}/${block.id}`}
+          options={{
+            automaticLayout: true,
+            fontSize: 13,
+            scrollBeyondLastLine: false,
+            showFoldingControls: "always",
+          }}
+          onMount={(ed, monaco) => {
+            attachHeadingEnter(ed, monaco);
+            setEditorInstance(ed);
+          }}
+        />
+      </Box>
+      {!single && !collapsed && (
+        <Box
+          h="6px"
+          cursor="ns-resize"
+          bgColor={darkMode ? "#2d2d2d" : "#f0f0f0"}
+          borderTop="1px solid"
+          borderColor={darkMode ? "#444" : "#ddd"}
+          _hover={{ bgColor: darkMode ? "#3a3a3a" : "#e2e2e2" }}
+          style={{ touchAction: "none" }}
+          onPointerDown={startResize}
+          title="Drag to resize"
+        />
       )}
     </Box>
   );
