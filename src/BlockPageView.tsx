@@ -578,6 +578,7 @@ function ReorderableBlock({
       value={blockId}
       dragListener={false}
       dragControls={controls}
+      drag={editorProps.single ? false : "y"}
       layout={editorProps.single ? undefined : "position"}
       initial={false}
       style={{
@@ -591,7 +592,12 @@ function ReorderableBlock({
     >
       <BlockEditor
         {...editorProps}
-        onDragHandlePointerDown={(event) => controls.start(event)}
+        onDragHandlePointerDown={(event) => {
+          // Single presentation has no stacked list to drag within. Editors
+          // stay mounted (ADR 0004), so framer-motion would still reorder.
+          if (editorProps.single) return;
+          controls.start(event);
+        }}
       />
     </Reorder.Item>
   );

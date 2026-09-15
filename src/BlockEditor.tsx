@@ -415,10 +415,10 @@ function BlockEditor({
           size="xs"
           variant="ghost"
           flexShrink={0}
-          cursor="grab"
-          style={{ touchAction: "none" }}
+          cursor={single ? "default" : "grab"}
+          style={{ touchAction: single ? undefined : "none" }}
           onPointerDown={(event) => {
-            if (event.button !== 0) return;
+            if (single || event.button !== 0) return;
             event.preventDefault();
             onDragHandlePointerDown(event);
           }}

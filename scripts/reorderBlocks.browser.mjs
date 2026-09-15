@@ -301,6 +301,45 @@ async function restoreAbc(page) {
   await waitForSidebarIds(page, ["aaaaaa", "bbbbbb", "cccccc"]);
 }
 
+async function selectPresentation(page, value) {
+  await page.getByLabel("Block presentation").selectOption(value);
+  await page.waitForFunction(
+    (wanted) =>
+      document
+        .querySelector("[data-block-scroll]")
+        ?.getAttribute("data-presentation") === wanted,
+    value,
+  );
+}
+
+const headerGripDragPx = 250;
+
+async function dragHeaderGrip(page, blockId, deltaY) {
+  const handle = page
+    .locator(`[data-block-panel="${blockId}"]`)
+    .getByLabel("Reorder block");
+  await handle.waitFor();
+  const box = await handle.boundingBox();
+  assert.ok(box);
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + deltaY, { steps: 16 });
+  await page.mouse.up();
+}
+
+async function clickHeaderMove(page, blockId, name) {
+  await page
+    .locator(`[data-block-panel="${blockId}"]`)
+    .getByLabel("More block actions")
+    .click();
+  await page
+    .locator('[role="menu"]:visible')
+    .getByRole("menuitem", { name, exact: true })
+    .click();
+}
+
 async function pointerDragHandle(
   page,
   movedId,
@@ -518,6 +557,54 @@ try {
   await waitForSidebarIds(page, ["aaaaaa", "bbbbbb", "cccccc"]);
   assert.deepEqual(await stackedIds(page), ["aaaaaa", "bbbbbb", "cccccc"]);
   console.log("PASS header: stacked menu and sidebar share one order");
+
+  await restoreAbc(page);
+  const stackedGripBefore = await sidebarIds(page);
+  assert.deepEqual(stackedGripBefore, ["aaaaaa", "bbbbbb", "cccccc"]);
+  await dragHeaderGrip(page, "aaaaaa", headerGripDragPx);
+  await page.waitForFunction((before) => {
+    const got = [
+      ...document.querySelectorAll('nav[aria-label="Blocks"] [data-block-id]'),
+    ].map((el) => el.getAttribute("data-block-id"));
+    return got.join(",") !== before.join(",");
+  }, stackedGripBefore);
+  const stackedGripAfter = await sidebarIds(page);
+  assert.notDeepEqual(stackedGripAfter, stackedGripBefore);
+  assert.deepEqual(await stackedIds(page), stackedGripAfter);
+  await waitForCurrent(page, "aaaaaa");
+  console.log("PASS header grip: stacked drag still reorders");
+
+  await restoreAbc(page);
+  await selectPresentation(page, "single");
+  await waitForCurrent(page, "aaaaaa");
+  const singleGripBefore = await sidebarIds(page);
+  assert.deepEqual(singleGripBefore, ["aaaaaa", "bbbbbb", "cccccc"]);
+  const writesBeforeSingleGrip = await manifestEditCount(page);
+  await dragHeaderGrip(page, "aaaaaa", headerGripDragPx);
+  const holdUntil = Date.now() + 400;
+  while (Date.now() < holdUntil) {
+    assert.deepEqual(await sidebarIds(page), singleGripBefore);
+    assert.deepEqual(await stackedIds(page), singleGripBefore);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(await manifestEditCount(page), writesBeforeSingleGrip);
+  await waitForManifest(
+    pageId,
+    (manifest) =>
+      manifest.blocks.map((block) => block.id).join(",") ===
+      singleGripBefore.join(","),
+    "single header grip drag wrote a reorder",
+  );
+  console.log("PASS header grip: single drag does not reorder");
+
+  await clickHeaderMove(page, "aaaaaa", "Move Down");
+  await waitForSidebarIds(page, ["bbbbbb", "aaaaaa", "cccccc"]);
+  assert.deepEqual(await stackedIds(page), ["bbbbbb", "aaaaaa", "cccccc"]);
+  await waitForCurrent(page, "aaaaaa");
+  console.log("PASS header: single menu still moves the block");
+
+  await selectPresentation(page, "stacked");
+  await restoreAbc(page);
 
   const beforeDrag = await sidebarIds(page);
   assert.deepEqual(beforeDrag, ["aaaaaa", "bbbbbb", "cccccc"]);
