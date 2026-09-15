@@ -6,6 +6,7 @@ import {
   type BlockLayout,
   type Manifest,
   type MoveDirection,
+  addBlockAfter as addBlockAfterToManifest,
   addBlock as addBlockToManifest,
   createDefaultBlock,
   migrateCompactHeights,
@@ -161,6 +162,21 @@ export function useManifest(
     [updateManifest],
   );
 
+  const addBlockAfter = useCallback(
+    (afterId: string | null, language: string = "plaintext"): string | null => {
+      let createdId: string | null = null;
+      updateManifest((prev) => {
+        const next = addBlockAfterToManifest(prev, afterId, language);
+        const previousIds = new Set(prev.blocks.map((block) => block.id));
+        createdId =
+          next.blocks.find((block) => !previousIds.has(block.id))?.id ?? null;
+        return next;
+      });
+      return createdId;
+    },
+    [updateManifest],
+  );
+
   const updateTitle = useCallback(
     (title: string) => {
       updateManifest((prev) => setManifestTitle(prev, title));
@@ -222,6 +238,7 @@ export function useManifest(
     connection,
     ready,
     addBlock,
+    addBlockAfter,
     updateTitle,
     removeBlock,
     updateBlock,

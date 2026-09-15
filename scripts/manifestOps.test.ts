@@ -5,6 +5,7 @@ import {
   type BlockInfo,
   type Manifest,
   addBlock,
+  addBlockAfter,
   doesFoldRecordDiffer,
   isEmptyFoldRecord,
   migrateCompactHeights,
@@ -281,6 +282,71 @@ test("addBlock defaults language to plaintext", () => {
   assertUntouched(input, before);
 });
 
+test("addBlockAfter inserts an Untitled plaintext block immediately after a middle id", () => {
+  const input = prepared([a, b, c], "workspace");
+  const before = structuredClone(input);
+  const result = addBlockAfter(input, "aaaaaa");
+  assert.equal(result.blocks.length, 4);
+  const added = result.blocks[1];
+  assert.equal(added.title, "Untitled");
+  assert.equal(added.language, "plaintext");
+  assert.equal(/^[a-z0-9]{6}$/.test(added.id), true);
+  assert.notEqual(added.id, "aaaaaa");
+  assert.deepEqual(result.blocks[0], a);
+  assert.deepEqual(result.blocks.slice(2), [b, c]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assert.equal(
+    JSON.stringify(withoutBlock(result, added.id)),
+    JSON.stringify(input),
+  );
+  assertUntouched(input, before);
+});
+
+test("addBlockAfter the last block appends and keeps the rest in order", () => {
+  const input = prepared([a, b, c], "workspace");
+  const before = structuredClone(input);
+  const result = addBlockAfter(input, "cccccc");
+  assert.equal(result.blocks.length, 4);
+  const added = result.blocks[3];
+  assert.equal(added.title, "Untitled");
+  assert.equal(added.language, "plaintext");
+  assert.equal(/^[a-z0-9]{6}$/.test(added.id), true);
+  assert.deepEqual(result.blocks.slice(0, 3), [a, b, c]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
+test("addBlockAfter with a current id that is not in the list appends", () => {
+  const input = prepared([a, b, c], "workspace");
+  const before = structuredClone(input);
+  const result = addBlockAfter(input, "nope00");
+  assert.equal(result.blocks.length, 4);
+  const added = result.blocks[3];
+  assert.equal(added.title, "Untitled");
+  assert.equal(added.language, "plaintext");
+  assert.deepEqual(result.blocks.slice(0, 3), [a, b, c]);
+  assert.notEqual(result.blocks[0].id, added.id);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
+test("addBlockAfter on an empty manifest creates the first plaintext block", () => {
+  const input = prepared([]);
+  const before = structuredClone(input);
+  const result = addBlockAfter(input, null);
+  assert.equal(result.blocks.length, 1);
+  const added = result.blocks[0];
+  assert.equal(added.title, "Untitled");
+  assert.equal(added.language, "plaintext");
+  assert.equal(/^[a-z0-9]{6}$/.test(added.id), true);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
 test("removeBlock drops only the target block", () => {
   const input = prepared([a, b, c]);
   const before = structuredClone(input);
@@ -330,6 +396,50 @@ test("updateBlock on an empty manifest returns an equivalent manifest", () => {
   const input = prepared([]);
   const before = structuredClone(input);
   assertNoChange(updateBlock(input, "aaaaaa", { title: "X" }), input, before);
+});
+
+test("updateBlock rename leaves every other field and the order untouched", () => {
+  const extra = { ...a, height: 240, collapsed: true, folds: sampleFolds };
+  const input = freezeManifest(
+    structuredClone(manifest([extra, b, c], "workspace")),
+  );
+  const before = structuredClone(input);
+  const result = updateBlock(input, "aaaaaa", { title: "Renamed" });
+  assert.deepEqual(result.blocks[0], {
+    ...extra,
+    title: "Renamed",
+  });
+  assert.equal(result.blocks[0].id, "aaaaaa");
+  assert.equal(result.blocks[0].language, "markdown");
+  assert.equal(result.blocks[0].height, 240);
+  assert.equal(result.blocks[0].collapsed, true);
+  assert.deepEqual(result.blocks[0].folds, sampleFolds);
+  assert.deepEqual(result.blocks.slice(1), [b, c]);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assert.equal(
+    JSON.stringify(withoutBlock(result, "aaaaaa")),
+    JSON.stringify(withoutBlock(input, "aaaaaa")),
+  );
+  assertUntouched(input, before);
+});
+
+test("updateBlock preserves duplicate titles rather than deduplicating", () => {
+  const input = prepared([a, b, c]);
+  const before = structuredClone(input);
+  const result = updateBlock(input, "cccccc", { title: "A" });
+  assert.equal(result.blocks[0].title, "A");
+  assert.equal(result.blocks[2].title, "A");
+  assert.equal(result.blocks[0].id, "aaaaaa");
+  assert.equal(result.blocks[2].id, "cccccc");
+  assert.deepEqual(
+    result.blocks.map((entry) => entry.id),
+    ["aaaaaa", "bbbbbb", "cccccc"],
+  );
+  assert.deepEqual(result.blocks[1], b);
+  assert.equal(result.blocks[0].language, "markdown");
+  assert.equal(result.blocks[2].language, "rust");
+  assertUntouched(input, before);
 });
 
 test("parseManifest reads a well-formed manifest", () => {

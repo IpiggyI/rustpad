@@ -159,6 +159,21 @@ export function addBlock(
   };
 }
 
+export function addBlockAfter(
+  manifest: Manifest,
+  afterId: string | null,
+  language: string = "plaintext",
+): Manifest {
+  const block = createDefaultBlock(language);
+  const index = afterId
+    ? manifest.blocks.findIndex((entry) => entry.id === afterId)
+    : -1;
+  const insertAt = index < 0 ? manifest.blocks.length : index + 1;
+  const blocks = [...manifest.blocks];
+  blocks.splice(insertAt, 0, block);
+  return { ...manifest, blocks };
+}
+
 export function removeBlock(manifest: Manifest, blockId: string): Manifest {
   return {
     ...manifest,

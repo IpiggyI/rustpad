@@ -59,6 +59,7 @@ import {
   saveCurrentBlockId,
 } from "./currentBlock";
 import languageExtensions from "./extensions";
+import languages from "./languages.json";
 import type Rustpad from "./rustpad";
 import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
@@ -126,6 +127,112 @@ function clearLegacyLayout(pageId: string, blockId: string): void {
   } catch {
     // leftover cleanup must never interrupt editing
   }
+}
+
+function stopFieldBubble(event: { stopPropagation(): void }) {
+  event.stopPropagation();
+}
+
+function SidebarBlockRow({
+  block,
+  isCurrent,
+  darkMode,
+  autoFocusName,
+  onSelect,
+  onUpdateBlock,
+  onNameBlur,
+}: {
+  block: BlockInfo;
+  isCurrent: boolean;
+  darkMode: boolean;
+  autoFocusName: boolean;
+  onSelect: () => void;
+  onUpdateBlock: (
+    patch: Partial<Pick<BlockInfo, "title" | "language">>,
+  ) => void;
+  onNameBlur: () => void;
+}) {
+  return (
+    <Flex
+      data-block-row={block.id}
+      align="center"
+      gap={1}
+      minH={8}
+      px={1}
+      borderRadius="md"
+      bgColor={isCurrent ? (darkMode ? "#37373d" : "gray.200") : "transparent"}
+      _hover={{
+        bgColor: darkMode ? "#323232" : "gray.100",
+      }}
+      onClick={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest("input, select, textarea")
+        ) {
+          return;
+        }
+        onSelect();
+      }}
+    >
+      <Button
+        data-block-id={block.id}
+        aria-current={isCurrent ? "true" : undefined}
+        aria-label={block.title}
+        variant="ghost"
+        size="sm"
+        minW={6}
+        h={7}
+        px={1}
+        flexShrink={0}
+        fontWeight={isCurrent ? "semibold" : "normal"}
+        onClick={onSelect}
+      >
+        {isCurrent ? "●" : "○"}
+      </Button>
+      <ImeInput
+        data-block-name={block.id}
+        aria-label="Block name"
+        size="sm"
+        variant="unstyled"
+        fontSize="sm"
+        value={block.title}
+        onValueChange={(title) => onUpdateBlock({ title })}
+        flex="1 1 0"
+        minW={0}
+        px={1}
+        autoFocus={autoFocusName}
+        onPointerDown={stopFieldBubble}
+        onMouseDown={stopFieldBubble}
+        onClick={stopFieldBubble}
+        onFocus={(event) => {
+          if (autoFocusName) event.currentTarget.select();
+        }}
+        onBlur={onNameBlur}
+      />
+      <Select
+        data-block-language={block.id}
+        aria-label="Block language"
+        size="xs"
+        variant="unstyled"
+        fontSize="xs"
+        value={block.language}
+        onChange={(event) => onUpdateBlock({ language: event.target.value })}
+        flex="0 0 6.5rem"
+        minW={0}
+        maxW="6.5rem"
+        color={darkMode ? "#999" : "#666"}
+        onPointerDown={stopFieldBubble}
+        onMouseDown={stopFieldBubble}
+        onClick={stopFieldBubble}
+      >
+        {languages.map((lang) => (
+          <option key={lang} value={lang} style={{ color: "black" }}>
+            {lang}
+          </option>
+        ))}
+      </Select>
+    </Flex>
+  );
 }
 
 function ReorderableBlock({
@@ -203,6 +310,7 @@ function BlockPageView({
     manifest,
     connection,
     addBlock,
+    addBlockAfter,
     updateTitle,
     removeBlock,
     updateBlock,
@@ -242,6 +350,7 @@ function BlockPageView({
   const lastOrderRef = useRef<string[]>([]);
   const lastPageIdRef = useRef<string | null>(null);
   const [currentBlockId, setCurrentBlockId] = useState<string | null>(null);
+  const [namingBlockId, setNamingBlockId] = useState<string | null>(null);
   const blockIdsKey = manifest.blocks.map((block) => block.id).join(",");
   const legacyLayouts = useMemo(
     () =>
@@ -288,6 +397,13 @@ function BlockPageView({
     },
     [commitCurrentBlock],
   );
+
+  const handleSidebarAddBlock = useCallback(() => {
+    const createdId = addBlockAfter(currentBlockIdRef.current);
+    if (!createdId) return;
+    commitCurrentBlock(createdId);
+    setNamingBlockId(createdId);
+  }, [addBlockAfter, commitCurrentBlock]);
 
   useEffect(() => {
     if (!currentBlockId) return;
@@ -747,42 +863,37 @@ function BlockPageView({
             Blocks
           </Heading>
           <Stack as="nav" aria-label="Blocks" spacing={1} fontSize="sm">
+            <Button
+              data-sidebar-add-block=""
+              aria-label="Add block after current"
+              leftIcon={<VscAdd />}
+              size="sm"
+              variant="outline"
+              colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+              w="full"
+              isDisabled={!manifestReady}
+              onClick={handleSidebarAddBlock}
+            >
+              Add Block
+            </Button>
             {manifestReady ? (
               manifest.blocks.map((block) => {
                 const isCurrent = block.id === currentBlockId;
                 return (
-                  <Button
+                  <SidebarBlockRow
                     key={block.id}
-                    data-block-id={block.id}
-                    aria-current={isCurrent ? "true" : undefined}
-                    variant="ghost"
-                    size="sm"
-                    h="auto"
-                    minH={0}
-                    py={1}
-                    px={2}
-                    w="full"
-                    justifyContent="flex-start"
-                    fontWeight={isCurrent ? "semibold" : "normal"}
-                    bgColor={
-                      isCurrent
-                        ? darkMode
-                          ? "#37373d"
-                          : "gray.200"
-                        : "transparent"
-                    }
-                    _hover={{
-                      bgColor: darkMode ? "#323232" : "gray.100",
+                    block={block}
+                    isCurrent={isCurrent}
+                    darkMode={darkMode}
+                    autoFocusName={block.id === namingBlockId}
+                    onSelect={() => selectBlockFromSidebar(block.id)}
+                    onUpdateBlock={(patch) => updateBlock(block.id, patch)}
+                    onNameBlur={() => {
+                      setNamingBlockId((current) =>
+                        current === block.id ? null : current,
+                      );
                     }}
-                    onClick={() => selectBlockFromSidebar(block.id)}
-                  >
-                    <Text as="span" noOfLines={1}>
-                      {block.title}{" "}
-                      <Text as="span" color={darkMode ? "#888" : "#999"}>
-                        ({block.language})
-                      </Text>
-                    </Text>
-                  </Button>
+                  />
                 );
               })
             ) : (
