@@ -9,7 +9,8 @@
     "build": "vite build",
     "serve": "vite preview",
     "format": "prettier --write .",
-    "test": "node --test scripts/"
+    "test": "node --test scripts/",
+    "test:browser": "node scripts/headingEnter.browser.mjs"
   },
   "dependencies": {
     "@chakra-ui/react": "^2.10.4",
@@ -31,6 +32,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "monaco-editor": "^0.52.2",
+    "playwright-core": "^1.63.0",
     "prettier": "3.4.2",
     "typescript": "~5.7.2",
     "vite": "^6.0.6",

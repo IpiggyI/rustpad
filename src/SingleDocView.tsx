@@ -31,6 +31,7 @@ import {
   shouldPersistSingleDocFolds,
 } from "./manifestOps";
 import {
+  attachHeadingEnter,
   isFoldingImeHeld,
   readFoldRecord,
   readFoldRecordSync,
@@ -519,7 +520,10 @@ function SingleDocView({
               scrollBeyondLastLine: false,
               showFoldingControls: "always",
             }}
-            onMount={(editor) => setEditor(editor)}
+            onMount={(editor, monaco) => {
+              attachHeadingEnter(editor, monaco);
+              setEditor(editor);
+            }}
           />
         </Box>
       </Flex>

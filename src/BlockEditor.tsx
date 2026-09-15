@@ -39,6 +39,7 @@ import {
   shouldPersistSingleDocFolds,
 } from "./manifestOps";
 import {
+  attachHeadingEnter,
   isFoldingImeHeld,
   readFoldRecord,
   readFoldRecordSync,
@@ -491,7 +492,10 @@ function BlockEditor({
                 scrollBeyondLastLine: false,
                 showFoldingControls: "always",
               }}
-              onMount={(ed) => setEditorInstance(ed)}
+              onMount={(ed, monaco) => {
+                attachHeadingEnter(ed, monaco);
+                setEditorInstance(ed);
+              }}
             />
           </Box>
           <Box

@@ -6,6 +6,42 @@ function isEmptyFoldRecord(value: unknown): boolean {
 
 type Monaco = typeof monaco;
 
+type CollapsedRegion = { startLineNumber: number; endLineNumber: number };
+
+export function planHeadingEnter(input: {
+  lines: string[];
+  language: string;
+  position: { lineNumber: number; column: number };
+  cursorCount: number;
+  selectionEmpty: boolean;
+  collapsedRegions: CollapsedRegion[];
+}) {
+  const { lines, position } = input;
+  const line = lines[position.lineNumber - 1];
+  const heading = line?.match(/^(#{1,6})\s/);
+  const region = input.collapsedRegions.find(
+    (region) => region.startLineNumber === position.lineNumber,
+  );
+  if (
+    input.language !== "markdown" ||
+    input.cursorCount !== 1 ||
+    !input.selectionEmpty ||
+    !heading ||
+    !region ||
+    position.column !== line.length + 1
+  )
+    return null;
+  const prefix = `${heading[1]} `;
+  const atEnd = region.endLineNumber === lines.length;
+  return {
+    lineNumber: atEnd ? region.endLineNumber : region.endLineNumber + 1,
+    column: atEnd ? lines[region.endLineNumber - 1].length + 1 : 1,
+    text: atEnd ? `\n${prefix}` : `${prefix}\n`,
+    caretLineNumber: region.endLineNumber + 1,
+    caretColumn: prefix.length + 1,
+  };
+}
+
 /** Compute folding ranges for ATX headings (`#` ~ `######`), skipping code fences. */
 function computeHeadingRanges(
   lines: string[],
@@ -61,12 +97,14 @@ type FoldingModelHandle = {
   getMemento(): unknown;
   applyMemento(state: unknown): void;
   readonly regions?: { readonly length: number };
+  updatePost?: (regions: NonNullable<FoldingModelHandle["regions"]>) => void;
   onDidChange?: (listener: () => void) => { dispose(): void };
 };
 
 type FoldingContribution = monaco.editor.IEditorContribution & {
   getFoldingModel?: () => Promise<FoldingModelHandle | null> | null;
   foldingModel?: FoldingModelHandle | null;
+  hiddenRangeModel?: { hiddenRanges: monaco.IRange[] } | null;
   restoreViewState?: (state: { collapsedRegions?: unknown }) => void;
 };
 
@@ -131,6 +169,117 @@ function mementoFromHandle(
 
 export function isFoldingImeHeld(ed: monaco.editor.ICodeEditor): boolean {
   return foldingImeHeldEditors.has(ed);
+}
+
+function headingEnterEdit(ed: monaco.editor.ICodeEditor) {
+  const model = ed.getModel();
+  const selections = ed.getSelections();
+  if (!model || !selections?.length || isFoldingImeHeld(ed)) return null;
+  const regions = getFoldingContribution(ed)?.foldingModel?.regions as
+    | {
+        length: number;
+        isCollapsed(index: number): boolean;
+        getStartLineNumber(index: number): number;
+        getEndLineNumber(index: number): number;
+      }
+    | undefined;
+  const collapsedRegions: CollapsedRegion[] = [];
+  for (let i = 0; regions && i < regions.length; i++) {
+    if (regions.isCollapsed(i)) {
+      collapsedRegions.push({
+        startLineNumber: regions.getStartLineNumber(i),
+        endLineNumber: regions.getEndLineNumber(i),
+      });
+    }
+  }
+  return planHeadingEnter({
+    lines: model.getLinesContent(),
+    language: model.getLanguageId(),
+    position: selections[0].getPosition(),
+    cursorCount: selections.length,
+    selectionEmpty: selections[0].isEmpty(),
+    collapsedRegions,
+  });
+}
+
+function refreshEofFolding(ed: monaco.editor.ICodeEditor) {
+  const contribution = getFoldingContribution(ed);
+  const folding = contribution?.foldingModel;
+  if (!folding?.regions) return;
+  // EOF insertion grows Monaco 0.52.2's collapsed decorations through the new
+  // heading. Rebuild their unchanged spans before moving the cursor.
+  folding.updatePost?.(folding.regions);
+  const hidden = contribution?.hiddenRangeModel?.hiddenRanges;
+  if (hidden) {
+    const view = ed as monaco.editor.ICodeEditor & {
+      setHiddenAreas(ranges: monaco.IRange[], source: unknown): void;
+    };
+    // An empty last line also grows the view's hidden decoration. Invalidate
+    // its range cache so the unchanged folding spans reach the view again.
+    view.setHiddenAreas([], contribution);
+    view.setHiddenAreas(hidden, contribution);
+  }
+}
+
+function executeHeadingEnter(
+  ed: monaco.editor.IStandaloneCodeEditor,
+  m: Monaco,
+) {
+  const edit = headingEnterEdit(ed);
+  if (!edit) return;
+  const range = m.Range.fromPositions({
+    lineNumber: edit.lineNumber,
+    column: edit.column,
+  });
+  const caret = m.Selection.fromPositions({
+    lineNumber: edit.caretLineNumber,
+    column: edit.caretColumn,
+  });
+  const atEnd = edit.caretLineNumber === ed.getModel()!.getLineCount() + 1;
+  ed.pushUndoStop();
+  ed.executeEdits("rustpad.headingEnter", [{ range, text: edit.text }], () => {
+    if (atEnd) refreshEofFolding(ed);
+    return [caret];
+  });
+  ed.pushUndoStop();
+  ed.revealPositionInCenterIfOutsideViewport(caret.getPosition());
+}
+
+export function attachHeadingEnter(
+  ed: monaco.editor.IStandaloneCodeEditor,
+  m: Monaco,
+): monaco.IDisposable {
+  const enabled = ed.createContextKey<boolean>("rustpadHeadingEnter", false);
+  const keydown = ed.onKeyDown((event) => {
+    enabled.set(
+      event.keyCode === m.KeyCode.Enter &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        !event.browserEvent.isComposing &&
+        event.browserEvent.keyCode !== 229 &&
+        headingEnterEdit(ed) !== null,
+    );
+  });
+  const action = ed.addAction({
+    id: "rustpad.headingEnter",
+    label: "Insert sibling Markdown heading",
+    keybindings: [m.KeyCode.Enter],
+    precondition:
+      "rustpadHeadingEnter && editorTextFocus && !editorReadonly && !suggestWidgetVisible && !inSnippetMode && !findWidgetVisible",
+    run: () => executeHeadingEnter(ed, m),
+  });
+  const disposed = ed.onDidDispose(() => disposable.dispose());
+  const disposable = {
+    dispose() {
+      disposed.dispose();
+      keydown.dispose();
+      action.dispose();
+      enabled.reset();
+    },
+  };
+  return disposable;
 }
 
 /**
