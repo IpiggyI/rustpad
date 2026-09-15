@@ -16,6 +16,7 @@ import {
   Input,
   InputGroup,
   InputRightElement,
+  Portal,
   Select,
   Stack,
   Switch,
@@ -34,11 +35,17 @@ import {
 } from "react";
 import {
   VscAdd,
+  VscArrowDown,
+  VscArrowUp,
   VscClose,
   VscCloudDownload,
   VscCopy,
+  VscEllipsis,
+  VscGripper,
   VscLayoutSidebarLeft,
   VscLayoutSidebarLeftOff,
+  VscTriangleDown,
+  VscTriangleUp,
 } from "react-icons/vsc";
 import useLocalStorageState from "use-local-storage-state";
 
@@ -47,6 +54,7 @@ import {
   type BlockInfo,
   type BlockLayout,
   Manifest,
+  type MoveDirection,
   migrateLegacyLayout,
   useManifest,
 } from "./BlockManifest";
@@ -72,6 +80,220 @@ import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
 
 const exportTimeoutMs = 10000;
+const SIDEBAR_SCROLL_EDGE_PX = 36;
+const SIDEBAR_SCROLL_STEP_PX = 16;
+
+type SidebarDrag = {
+  movedId: string;
+  pointerId: number;
+  previewOrder: string[];
+  insertBeforeId: string | null;
+};
+
+function findScrollParent(start: HTMLElement | null): HTMLElement | null {
+  let node: HTMLElement | null = start;
+  while (node) {
+    const style = window.getComputedStyle(node);
+    const overflowY = style.overflowY;
+    if (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      node.scrollHeight > node.clientHeight + 1
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function sidebarDropFromY(
+  nav: HTMLElement,
+  movedId: string,
+  clientY: number,
+): { previewOrder: string[]; insertBeforeId: string | null } {
+  const rows = Array.from(
+    nav.querySelectorAll<HTMLElement>("[data-block-row]"),
+  ).map((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      id: el.getAttribute("data-block-row") ?? "",
+      mid: rect.top + rect.height / 2,
+    };
+  });
+  const others = rows.filter((row) => row.id && row.id !== movedId);
+  let insertAt = others.length;
+  for (let i = 0; i < others.length; i++) {
+    if (clientY < others[i].mid) {
+      insertAt = i;
+      break;
+    }
+  }
+  const insertBeforeId = insertAt < others.length ? others[insertAt].id : null;
+  return {
+    insertBeforeId,
+    previewOrder: [
+      ...others.slice(0, insertAt).map((row) => row.id),
+      movedId,
+      ...others.slice(insertAt).map((row) => row.id),
+    ],
+  };
+}
+
+function sameStringList(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+function SidebarDropIndicator({
+  insertBeforeId,
+}: {
+  insertBeforeId: string | null;
+}) {
+  return (
+    <Box
+      data-sidebar-drop-indicator=""
+      data-insert-before={insertBeforeId ?? ""}
+      h="2px"
+      bgColor="blue.400"
+      borderRadius="full"
+      mx={1}
+      flexShrink={0}
+    />
+  );
+}
+
+function SidebarReorderMenu({
+  blockId,
+  darkMode,
+  onMoveBlock,
+}: {
+  blockId: string;
+  darkMode: boolean;
+  onMoveBlock: (direction: MoveDirection) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const menuItemBg = darkMode ? "#2d2d2d" : "white";
+  const menuItemActive = { bgColor: darkMode ? "#3a3a3a" : "gray.100" };
+  const items: {
+    dir: MoveDirection;
+    label: string;
+    icon: typeof VscTriangleUp;
+  }[] = [
+    { dir: "up", label: "Move Up", icon: VscTriangleUp },
+    { dir: "down", label: "Move Down", icon: VscTriangleDown },
+    { dir: "top", label: "Move to Top", icon: VscArrowUp },
+    { dir: "bottom", label: "Move to Bottom", icon: VscArrowDown },
+  ];
+
+  useEffect(() => {
+    if (!open) return;
+    const button = buttonRef.current;
+    if (button) {
+      const rect = button.getBoundingClientRect();
+      setPos({ top: rect.top, left: rect.right + 4 });
+    }
+    const onDoc = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (
+        buttonRef.current?.contains(target) ||
+        menuRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <IconButton
+        ref={buttonRef}
+        data-sidebar-reorder-menu={blockId}
+        aria-label="Reorder block menu"
+        aria-expanded={open ? "true" : undefined}
+        icon={<Icon as={VscEllipsis} />}
+        size="xs"
+        variant="ghost"
+        flexShrink={0}
+        onPointerDown={stopFieldBubble}
+        onMouseDown={stopFieldBubble}
+        onClick={(event) => {
+          stopFieldBubble(event);
+          const rect = buttonRef.current?.getBoundingClientRect();
+          if (rect) {
+            setPos({ top: rect.top, left: rect.right + 4 });
+          }
+          setOpen((current) => !current);
+        }}
+      />
+      {open && (
+        <Portal>
+          <Box
+            ref={menuRef}
+            role="menu"
+            position="fixed"
+            top={`${pos.top}px`}
+            left={`${pos.left}px`}
+            zIndex={1500}
+            minW="12rem"
+            py={2}
+            fontSize="sm"
+            bgColor={darkMode ? "#2d2d2d" : "white"}
+            borderWidth="1px"
+            borderColor={darkMode ? "#444" : "gray.200"}
+            color={darkMode ? "#cbcaca" : "inherit"}
+            borderRadius="md"
+            boxShadow="md"
+          >
+            {items.map((item) => (
+              <Button
+                key={item.dir}
+                role="menuitem"
+                data-sidebar-move={`${blockId}:${item.dir}`}
+                leftIcon={<Icon as={item.icon} />}
+                justifyContent="flex-start"
+                variant="ghost"
+                size="sm"
+                w="full"
+                borderRadius={0}
+                bgColor={menuItemBg}
+                _hover={menuItemActive}
+                _focus={menuItemActive}
+                onPointerDown={stopFieldBubble}
+                onMouseDown={stopFieldBubble}
+                onClick={(event) => {
+                  stopFieldBubble(event);
+                  setOpen(false);
+                  onMoveBlock(item.dir);
+                }}
+              >
+                {item.label}
+              </Button>
+            ))}
+          </Box>
+        </Portal>
+      )}
+    </>
+  );
+}
 
 function readLegacyNumber(raw: string | null): number | undefined {
   if (raw === null) return undefined;
@@ -193,15 +415,19 @@ function DeleteBlockConfirm({
 function SidebarBlockRow({
   block,
   isCurrent,
+  isDragging,
   darkMode,
   autoFocusName,
   onSelect,
   onUpdateBlock,
   onNameBlur,
   onRemove,
+  onMoveBlock,
+  onDragHandlePointerDown,
 }: {
   block: BlockInfo;
   isCurrent: boolean;
+  isDragging: boolean;
   darkMode: boolean;
   autoFocusName: boolean;
   onSelect: () => void;
@@ -210,6 +436,8 @@ function SidebarBlockRow({
   ) => void;
   onNameBlur: () => void;
   onRemove: () => void;
+  onMoveBlock: (direction: MoveDirection) => void;
+  onDragHandlePointerDown: (event: React.PointerEvent) => void;
 }) {
   return (
     <Flex
@@ -219,6 +447,7 @@ function SidebarBlockRow({
       minH={8}
       px={1}
       borderRadius="md"
+      opacity={isDragging ? 0.7 : 1}
       bgColor={isCurrent ? (darkMode ? "#37373d" : "gray.200") : "transparent"}
       _hover={{
         bgColor: darkMode ? "#323232" : "gray.100",
@@ -226,13 +455,29 @@ function SidebarBlockRow({
       onClick={(event) => {
         if (
           event.target instanceof Element &&
-          event.target.closest("input, select, textarea")
+          event.target.closest("input, select, textarea, button")
         ) {
           return;
         }
         onSelect();
       }}
     >
+      <IconButton
+        data-sidebar-drag-handle={block.id}
+        aria-label="Drag to reorder block"
+        icon={<Icon as={VscGripper} />}
+        size="xs"
+        variant="ghost"
+        flexShrink={0}
+        cursor="grab"
+        style={{ touchAction: "none" }}
+        onPointerDown={(event) => {
+          stopFieldBubble(event);
+          onDragHandlePointerDown(event);
+        }}
+        onMouseDown={stopFieldBubble}
+        onClick={stopFieldBubble}
+      />
       <Button
         data-block-id={block.id}
         aria-current={isCurrent ? "true" : undefined}
@@ -244,7 +489,12 @@ function SidebarBlockRow({
         px={1}
         flexShrink={0}
         fontWeight={isCurrent ? "semibold" : "normal"}
-        onClick={onSelect}
+        onPointerDown={stopFieldBubble}
+        onMouseDown={stopFieldBubble}
+        onClick={(event) => {
+          stopFieldBubble(event);
+          onSelect();
+        }}
       >
         {isCurrent ? "●" : "○"}
       </Button>
@@ -290,6 +540,11 @@ function SidebarBlockRow({
           </option>
         ))}
       </Select>
+      <SidebarReorderMenu
+        blockId={block.id}
+        darkMode={darkMode}
+        onMoveBlock={onMoveBlock}
+      />
       <IconButton
         data-sidebar-remove-block={block.id}
         aria-label="Remove block"
@@ -392,6 +647,7 @@ function BlockPageView({
     migrateLegacyLayout: adoptLegacyLayout,
     moveBlock,
     moveBlockBefore,
+    reorderBlockByPreview,
     ready: manifestReady,
     unusable: manifestUnusable,
   } = useManifest(id, {
@@ -578,6 +834,166 @@ function BlockPageView({
     },
     [moveBlockBefore],
   );
+
+  const [sidebarDrag, setSidebarDrag] = useState<SidebarDrag | null>(null);
+  const sidebarDragRef = useRef<SidebarDrag | null>(null);
+  const sidebarNavRef = useRef<HTMLDivElement | null>(null);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
+  const reorderBlockByPreviewRef = useRef(reorderBlockByPreview);
+  reorderBlockByPreviewRef.current = reorderBlockByPreview;
+
+  useEffect(() => {
+    sidebarDragRef.current = null;
+    setSidebarDrag(null);
+  }, [id]);
+
+  const endSidebarDrag = useCallback(
+    (clientX: number, clientY: number, cancelled: boolean) => {
+      const current = sidebarDragRef.current;
+      sidebarDragRef.current = null;
+      setSidebarDrag(null);
+      if (cancelled || !current) return;
+      const nav = sidebarNavRef.current;
+      if (!nav) return;
+      const rect = nav.getBoundingClientRect();
+      if (
+        clientX < rect.left ||
+        clientX > rect.right ||
+        clientY < rect.top ||
+        clientY > rect.bottom
+      ) {
+        return;
+      }
+      reorderBlockByPreviewRef.current(current.movedId, current.previewOrder);
+    },
+    [],
+  );
+
+  const handleSidebarDragPointerDown = useCallback(
+    (event: React.PointerEvent, blockId: string) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const pointerId = event.pointerId;
+      event.currentTarget.setPointerCapture(pointerId);
+      const order = blocksRef.current.map((block) => block.id);
+      const index = order.indexOf(blockId);
+      const drag: SidebarDrag = {
+        movedId: blockId,
+        pointerId,
+        previewOrder: order,
+        insertBeforeId:
+          index >= 0 && index < order.length - 1 ? order[index + 1] : null,
+      };
+      sidebarDragRef.current = drag;
+      setSidebarDrag(drag);
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+
+      const updateDrop = (clientY: number) => {
+        const nav = sidebarNavRef.current;
+        const current = sidebarDragRef.current;
+        if (!nav || !current) return;
+        const drop = sidebarDropFromY(nav, current.movedId, clientY);
+        if (
+          current.insertBeforeId === drop.insertBeforeId &&
+          sameStringList(current.previewOrder, drop.previewOrder)
+        ) {
+          return;
+        }
+        const next = { ...current, ...drop };
+        sidebarDragRef.current = next;
+        setSidebarDrag(next);
+      };
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        lastPointerRef.current = { x: ev.clientX, y: ev.clientY };
+        updateDrop(ev.clientY);
+      };
+      const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        cleanup();
+        endSidebarDrag(ev.clientX, ev.clientY, false);
+      };
+      const onCancel = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        cleanup();
+        endSidebarDrag(ev.clientX, ev.clientY, true);
+      };
+      const onKey = (ev: KeyboardEvent) => {
+        if (ev.key !== "Escape") return;
+        cleanup();
+        endSidebarDrag(0, 0, true);
+      };
+      const cleanup = () => {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onCancel);
+        window.removeEventListener("keydown", onKey);
+      };
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onCancel);
+      window.addEventListener("keydown", onKey);
+    },
+    [endSidebarDrag],
+  );
+
+  useEffect(() => {
+    const drag = sidebarDragRef.current;
+    if (!drag) return;
+    if (!manifest.blocks.some((block) => block.id === drag.movedId)) {
+      sidebarDragRef.current = null;
+      setSidebarDrag(null);
+    }
+  }, [manifest.blocks]);
+
+  useEffect(() => {
+    if (!sidebarDrag) return;
+    const movedId = sidebarDrag.movedId;
+    let frame = 0;
+    const tick = () => {
+      const nav = sidebarNavRef.current;
+      const scroller = findScrollParent(nav);
+      if (scroller) {
+        const rect = scroller.getBoundingClientRect();
+        const { y } = lastPointerRef.current;
+        if (y < rect.top + SIDEBAR_SCROLL_EDGE_PX) {
+          scroller.scrollTop -= SIDEBAR_SCROLL_STEP_PX;
+        } else if (y > rect.bottom - SIDEBAR_SCROLL_EDGE_PX) {
+          scroller.scrollTop += SIDEBAR_SCROLL_STEP_PX;
+        }
+      }
+      if (nav) {
+        const current = sidebarDragRef.current;
+        if (current) {
+          const drop = sidebarDropFromY(nav, movedId, lastPointerRef.current.y);
+          if (
+            current.insertBeforeId !== drop.insertBeforeId ||
+            !sameStringList(current.previewOrder, drop.previewOrder)
+          ) {
+            const next = { ...current, ...drop };
+            sidebarDragRef.current = next;
+            setSidebarDrag(next);
+          }
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [sidebarDrag?.movedId]);
+
+  useEffect(() => {
+    if (!sidebarDrag) return;
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.cancelable) event.preventDefault();
+    };
+    document.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => document.removeEventListener("touchmove", onTouchMove);
+  }, [sidebarDrag?.movedId]);
+
+  const sidebarOrderIds =
+    sidebarDrag?.previewOrder ?? manifest.blocks.map((block) => block.id);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorageState(
     "sidebarCollapsed",
@@ -964,7 +1380,14 @@ function BlockPageView({
           <Heading mt={4} mb={1.5} size="sm">
             Blocks
           </Heading>
-          <Stack as="nav" aria-label="Blocks" spacing={1} fontSize="sm">
+          <Stack
+            as="nav"
+            ref={sidebarNavRef}
+            aria-label="Blocks"
+            spacing={1}
+            fontSize="sm"
+            userSelect={sidebarDrag ? "none" : undefined}
+          >
             <Button
               data-sidebar-add-block=""
               aria-label="Add block after current"
@@ -983,28 +1406,46 @@ function BlockPageView({
                 The block list could not be read.
               </Text>
             ) : manifestReady ? (
-              manifest.blocks.map((block) => {
+              sidebarOrderIds.map((blockId) => {
+                const block = manifest.blocks.find(
+                  (entry) => entry.id === blockId,
+                );
+                if (!block) return null;
                 const isCurrent = block.id === currentBlockId;
                 return (
-                  <SidebarBlockRow
-                    key={block.id}
-                    block={block}
-                    isCurrent={isCurrent}
-                    darkMode={darkMode}
-                    autoFocusName={block.id === namingBlockId}
-                    onSelect={() => selectBlockFromSidebar(block.id)}
-                    onUpdateBlock={(patch) => updateBlock(block.id, patch)}
-                    onNameBlur={() => {
-                      setNamingBlockId((current) =>
-                        current === block.id ? null : current,
-                      );
-                    }}
-                    onRemove={() => requestDeleteBlock(block)}
-                  />
+                  <Box key={block.id}>
+                    {sidebarDrag?.insertBeforeId === block.id && (
+                      <SidebarDropIndicator insertBeforeId={block.id} />
+                    )}
+                    <SidebarBlockRow
+                      block={block}
+                      isCurrent={isCurrent}
+                      isDragging={sidebarDrag?.movedId === block.id}
+                      darkMode={darkMode}
+                      autoFocusName={block.id === namingBlockId}
+                      onSelect={() => selectBlockFromSidebar(block.id)}
+                      onUpdateBlock={(patch) => updateBlock(block.id, patch)}
+                      onNameBlur={() => {
+                        setNamingBlockId((current) =>
+                          current === block.id ? null : current,
+                        );
+                      }}
+                      onRemove={() => requestDeleteBlock(block)}
+                      onMoveBlock={(dir) => {
+                        moveBlock(block.id, dir);
+                      }}
+                      onDragHandlePointerDown={(event) => {
+                        handleSidebarDragPointerDown(event, block.id);
+                      }}
+                    />
+                  </Box>
                 );
               })
             ) : (
               <Text color={darkMode ? "#888" : "#666"}>Loading...</Text>
+            )}
+            {sidebarDrag && sidebarDrag.insertBeforeId === null && (
+              <SidebarDropIndicator insertBeforeId={null} />
             )}
           </Stack>
 

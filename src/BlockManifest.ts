@@ -15,6 +15,7 @@ import {
   moveBlock as moveBlockInManifest,
   parseManifest,
   removeBlock as removeBlockFromManifest,
+  reorderBlockByPreview as reorderBlockByPreviewInManifest,
   serializeManifest,
   updateTitle as setManifestTitle,
   updateBlock as updateBlockInManifest,
@@ -241,6 +242,15 @@ export function useManifest(
     [updateManifest],
   );
 
+  const reorderBlockByPreview = useCallback(
+    (blockId: string, previewOrder: readonly string[]) => {
+      updateManifest((prev) =>
+        reorderBlockByPreviewInManifest(prev, blockId, previewOrder),
+      );
+    },
+    [updateManifest],
+  );
+
   return {
     manifest,
     connection,
@@ -255,5 +265,6 @@ export function useManifest(
     migrateLegacyLayout,
     moveBlock,
     moveBlockBefore,
+    reorderBlockByPreview,
   };
 }

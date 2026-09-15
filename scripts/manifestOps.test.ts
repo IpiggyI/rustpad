@@ -14,6 +14,7 @@ import {
   moveBlockBefore,
   parseManifest,
   removeBlock,
+  reorderBlockByPreview,
   sanitizeManifest,
   serializeManifest,
   updateBlock,
@@ -227,6 +228,203 @@ test("moveBlockBefore returns the original manifest when the reference id is no 
   const result = moveBlockBefore(input, "aaaaaa", "bbbbbb");
   assert.equal(result, input);
   assertNoChange(result, input, before);
+});
+
+const reorderFolds = [
+  {
+    startLineNumber: 1,
+    endLineNumber: 4,
+    isCollapsed: true,
+    checksum: 42,
+  },
+];
+
+function byId(blocks: BlockInfo[]): Map<string, BlockInfo> {
+  return new Map(blocks.map((entry) => [entry.id, entry]));
+}
+
+// Criterion 5 counter-example: writing the array captured at drag start.
+function reorderFromCapturedArray(
+  capturedBlocks: BlockInfo[],
+  latest: Manifest,
+): Manifest {
+  return { ...latest, blocks: capturedBlocks };
+}
+
+test("moveBlock up down top and bottom keep titles languages heights collapsed flags and fold records", () => {
+  const richA = { ...a, height: 240, collapsed: true, folds: reorderFolds };
+  const richB = { ...b, height: 180, collapsed: false };
+  const richC = { ...c, height: 200 };
+  const richD = { ...d, height: 160, collapsed: true };
+  const input = freezeManifest(
+    structuredClone(manifest([richA, richB, richC, richD], "workspace")),
+  );
+  const before = structuredClone(input);
+
+  const up = moveBlock(input, "cccccc", "up");
+  assert.deepEqual(
+    up.blocks.map((entry) => entry.id),
+    ["aaaaaa", "cccccc", "bbbbbb", "dddddd"],
+  );
+  assert.deepEqual(byId(up.blocks).get("aaaaaa"), richA);
+  assert.deepEqual(byId(up.blocks).get("bbbbbb"), richB);
+  assert.deepEqual(byId(up.blocks).get("cccccc"), richC);
+  assert.deepEqual(byId(up.blocks).get("dddddd"), richD);
+
+  const down = moveBlock(input, "aaaaaa", "down");
+  assert.deepEqual(
+    down.blocks.map((entry) => entry.id),
+    ["bbbbbb", "aaaaaa", "cccccc", "dddddd"],
+  );
+  assert.deepEqual(byId(down.blocks).get("aaaaaa"), richA);
+
+  const top = moveBlock(input, "dddddd", "top");
+  assert.deepEqual(
+    top.blocks.map((entry) => entry.id),
+    ["dddddd", "aaaaaa", "bbbbbb", "cccccc"],
+  );
+  assert.deepEqual(byId(top.blocks).get("dddddd"), richD);
+
+  const bottom = moveBlock(input, "bbbbbb", "bottom");
+  assert.deepEqual(
+    bottom.blocks.map((entry) => entry.id),
+    ["aaaaaa", "cccccc", "dddddd", "bbbbbb"],
+  );
+  assert.deepEqual(byId(bottom.blocks).get("bbbbbb"), richB);
+  assertUntouched(input, before);
+});
+
+test("moveBlock at each boundary leaves every field and the order unchanged", () => {
+  const richA = { ...a, height: 240, collapsed: true, folds: reorderFolds };
+  const richC = { ...c, height: 200, collapsed: false };
+  const input = freezeManifest(
+    structuredClone(manifest([richA, b, richC], "workspace")),
+  );
+  const before = structuredClone(input);
+  assertNoChange(moveBlock(input, "aaaaaa", "up"), input, before);
+  assertNoChange(moveBlock(input, "aaaaaa", "top"), input, before);
+  assertNoChange(moveBlock(input, "cccccc", "down"), input, before);
+  assertNoChange(moveBlock(input, "cccccc", "bottom"), input, before);
+});
+
+test("a commit from the array captured at drag start drops a block added since the drag began", () => {
+  const extra = { ...block("eeeeee", "E", "go"), height: 240, collapsed: true };
+  const captured = [c, a, b];
+  const latest = freezeManifest(
+    structuredClone(manifest([a, extra, b, c], "workspace")),
+  );
+  const wrong = reorderFromCapturedArray(captured, latest);
+  assert.equal(
+    wrong.blocks.some((entry) => entry.id === "eeeeee"),
+    false,
+  );
+  assert.deepEqual(
+    wrong.blocks.map((entry) => entry.id),
+    ["cccccc", "aaaaaa", "bbbbbb"],
+  );
+});
+
+test("reorderBlockByPreview keeps a block added to the latest manifest since the drag began", () => {
+  const extra = { ...block("eeeeee", "E", "go"), height: 240, collapsed: true };
+  const input = freezeManifest(
+    structuredClone(manifest([a, extra, b, c], "workspace")),
+  );
+  const before = structuredClone(input);
+  const result = reorderBlockByPreview(input, "cccccc", [
+    "cccccc",
+    "aaaaaa",
+    "bbbbbb",
+  ]);
+  assert.deepEqual(
+    result.blocks.map((entry) => entry.id),
+    ["cccccc", "aaaaaa", "eeeeee", "bbbbbb"],
+  );
+  assert.deepEqual(result.blocks[2], extra);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
+test("reorderBlockByPreview against a latest that lost a different block does not resurrect it", () => {
+  const input = freezeManifest(
+    structuredClone(manifest([a, b, d], "workspace")),
+  );
+  const before = structuredClone(input);
+  const result = reorderBlockByPreview(input, "dddddd", [
+    "aaaaaa",
+    "dddddd",
+    "bbbbbb",
+    "cccccc",
+  ]);
+  assert.deepEqual(
+    result.blocks.map((entry) => entry.id),
+    ["aaaaaa", "dddddd", "bbbbbb"],
+  );
+  assert.equal(
+    result.blocks.some((entry) => entry.id === "cccccc"),
+    false,
+  );
+  assert.deepEqual(result.blocks[0], a);
+  assert.deepEqual(result.blocks[1], d);
+  assert.deepEqual(result.blocks[2], b);
+  assertUntouched(input, before);
+});
+
+test("reorderBlockByPreview returns the original manifest when the moved block is gone", () => {
+  const input = prepared([a, c]);
+  const before = structuredClone(input);
+  const result = reorderBlockByPreview(input, "bbbbbb", [
+    "bbbbbb",
+    "aaaaaa",
+    "cccccc",
+  ]);
+  assert.equal(result, input);
+  assertNoChange(result, input, before);
+});
+
+test("reorderBlockByPreview changes only the order and leaves ids titles languages heights collapsed flags and fold records identical", () => {
+  const richA = { ...a, height: 240, collapsed: true, folds: reorderFolds };
+  const richB = { ...b, height: 180, collapsed: false };
+  const richC = { ...c, height: 200, folds: reorderFolds };
+  const input = freezeManifest(
+    structuredClone(manifest([richA, richB, richC], "workspace")),
+  );
+  const before = structuredClone(input);
+  const result = reorderBlockByPreview(input, "cccccc", [
+    "cccccc",
+    "aaaaaa",
+    "bbbbbb",
+  ]);
+  assert.deepEqual(
+    result.blocks.map((entry) => entry.id),
+    ["cccccc", "aaaaaa", "bbbbbb"],
+  );
+  assert.deepEqual(result.blocks[0], richC);
+  assert.deepEqual(result.blocks[1], richA);
+  assert.deepEqual(result.blocks[2], richB);
+  assert.deepEqual(
+    [...result.blocks].sort((left, right) => left.id.localeCompare(right.id)),
+    [richA, richB, richC],
+  );
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assertUntouched(input, before);
+});
+
+test("reorderBlockByPreview skips a missing neighbor and still relocates against the latest list", () => {
+  const input = prepared([a, c, d]);
+  const before = structuredClone(input);
+  const result = reorderBlockByPreview(input, "dddddd", [
+    "dddddd",
+    "bbbbbb",
+    "aaaaaa",
+    "cccccc",
+  ]);
+  assert.deepEqual(
+    result.blocks.map((entry) => entry.id),
+    ["dddddd", "aaaaaa", "cccccc"],
+  );
+  assertUntouched(input, before);
 });
 
 test("addBlock prepends an Untitled block and keeps the rest in order", () => {

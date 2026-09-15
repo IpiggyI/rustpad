@@ -362,3 +362,35 @@ export function moveBlockBefore(
   blocks.splice(insertAt, 0, moved);
   return { ...manifest, blocks };
 }
+
+/**
+ * Relocate `movedId` using the local drag-preview order, applied to `latest`.
+ *
+ * The preview is a list of stable ids, not a block array to write back. A
+ * block another client added stays; a block another client removed is not
+ * resurrected; a missing moved id is not recreated. This ticket does not
+ * widen the synchronisation layer's guarantees about concurrent structural
+ * edits.
+ */
+export function reorderBlockByPreview(
+  latest: Manifest,
+  movedId: string,
+  previewOrder: readonly string[],
+): Manifest {
+  if (!latest.blocks.some((block) => block.id === movedId)) {
+    return latest;
+  }
+  const from = previewOrder.indexOf(movedId);
+  if (from < 0) return latest;
+
+  const latestIds = new Set(latest.blocks.map((block) => block.id));
+  let beforeId: string | null = null;
+  for (let i = from + 1; i < previewOrder.length; i++) {
+    const candidate = previewOrder[i];
+    if (candidate !== movedId && latestIds.has(candidate)) {
+      beforeId = candidate;
+      break;
+    }
+  }
+  return moveBlockBefore(latest, movedId, beforeId);
+}
