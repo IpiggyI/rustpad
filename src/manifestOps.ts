@@ -16,8 +16,12 @@ export type BlockLayout = {
 export type Manifest = {
   version: number;
   title?: string;
+  // Per-page one-time marker that existing block heights were reset to 200px.
+  compactHeights?: boolean;
   blocks: BlockInfo[];
 };
+
+export const DEFAULT_BLOCK_BODY_HEIGHT = 200;
 
 const BLOCK_ID = /^[a-z0-9]{6}$/;
 
@@ -122,6 +126,18 @@ export function parseManifest(text: string): Manifest | null {
 
 export function serializeManifest(manifest: Manifest): string {
   return JSON.stringify(manifest);
+}
+
+export function migrateCompactHeights(manifest: Manifest): Manifest {
+  if (manifest.compactHeights === true) return manifest;
+  return {
+    ...manifest,
+    compactHeights: true,
+    blocks: manifest.blocks.map((block) => ({
+      ...block,
+      height: DEFAULT_BLOCK_BODY_HEIGHT,
+    })),
+  };
 }
 
 export function createDefaultBlock(language: string = "plaintext"): BlockInfo {

@@ -3,6 +3,7 @@ const SNAPSHOT_KEY_PREFIX = "block-workspace:snapshot:";
 export type BlockSnapshot = {
   version: number;
   lastAccessedAt?: number;
+  compactHeights?: boolean;
   blocks: Array<{
     id: string;
     title: string;

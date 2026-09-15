@@ -35,6 +35,7 @@ import type { BlockInfo, BlockLayout, MoveDirection } from "./BlockManifest";
 import ImeInput from "./ImeInput";
 import languages from "./languages.json";
 import {
+  DEFAULT_BLOCK_BODY_HEIGHT,
   doesFoldRecordDiffer,
   shouldPersistSingleDocFolds,
 } from "./manifestOps";
@@ -83,7 +84,7 @@ function BlockEditor({
   onDragHandlePointerDown,
 }: BlockEditorProps) {
   const collapsed = block.collapsed ?? false;
-  const height = block.height ?? 300;
+  const height = block.height ?? DEFAULT_BLOCK_BODY_HEIGHT;
   const [dragHeight, setDragHeight] = useState<number | null>(null);
   const [connection, setConnection] = useState<
     "connected" | "disconnected" | "desynchronized"

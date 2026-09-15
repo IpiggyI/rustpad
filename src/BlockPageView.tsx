@@ -158,6 +158,7 @@ function BlockPageView({
       ? migrateLegacyLayout(
           {
             version: initialSnapshot.current.version,
+            compactHeights: initialSnapshot.current.compactHeights,
             blocks: initialSnapshot.current.blocks.map(
               ({ content, ...block }) => block,
             ),
@@ -294,6 +295,7 @@ function BlockPageView({
       const nextContents = { ...liveBlockContents.current, [blockId]: content };
       saveBlockSnapshot(id, {
         version: visibleManifest.version,
+        compactHeights: visibleManifest.compactHeights,
         blocks: visibleManifest.blocks.map((block) => ({
           ...block,
           content:
@@ -320,6 +322,7 @@ function BlockPageView({
   function saveCurrentSnapshot(nextContents = liveBlockContents.current) {
     const snapshot = {
       version: visibleManifest.version,
+      compactHeights: visibleManifest.compactHeights,
       blocks: visibleManifest.blocks.map((block) => ({
         ...block,
         content:

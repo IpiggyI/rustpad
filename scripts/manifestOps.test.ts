@@ -7,12 +7,14 @@ import {
   addBlock,
   doesFoldRecordDiffer,
   isEmptyFoldRecord,
+  migrateCompactHeights,
   migrateLegacyLayout,
   moveBlock,
   moveBlockBefore,
   parseManifest,
   removeBlock,
   sanitizeManifest,
+  serializeManifest,
   updateBlock,
   updateBlockLayout,
 } from "../src/manifestOps.ts";
@@ -685,4 +687,149 @@ test("updateBlockLayout returns the original manifest when incoming folds are em
   const result = updateBlockLayout(input, "bbbbbb", { folds: [] });
   assert.equal(result, input);
   assertNoChange(result, input, before);
+});
+
+test("migrateCompactHeights sets missing heights to 200 and writes compactHeights", () => {
+  const input = prepared([a, b]);
+  const before = structuredClone(input);
+  const result = migrateCompactHeights(input);
+  assert.equal(result.compactHeights, true);
+  assert.equal(result.blocks[0].height, 200);
+  assert.equal(result.blocks[1].height, 200);
+  assert.equal(result.blocks[0].id, "aaaaaa");
+  assert.equal(result.blocks[0].title, "A");
+  assert.equal(result.blocks[0].language, "markdown");
+  assert.equal(result.blocks[1].id, "bbbbbb");
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assert.equal(result.blocks.length, 2);
+  assertUntouched(input, before);
+});
+
+test("migrateCompactHeights resets mixed saved heights to 200 including collapsed blocks", () => {
+  const mixed = [
+    { ...a, height: 480, collapsed: true, folds: sampleFolds },
+    { ...b, height: 120 },
+    c,
+  ];
+  const input = freezeManifest(structuredClone(manifest(mixed, "workspace")));
+  const before = structuredClone(input);
+  const result = migrateCompactHeights(input);
+  assert.equal(result.compactHeights, true);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "workspace");
+  assert.deepEqual(result.blocks, [
+    {
+      ...a,
+      height: 200,
+      collapsed: true,
+      folds: sampleFolds,
+    },
+    { ...b, height: 200 },
+    { ...c, height: 200 },
+  ]);
+  assertUntouched(input, before);
+});
+
+test("migrateCompactHeights returns the same object when compactHeights is already true", () => {
+  const marked = freezeManifest(
+    structuredClone({
+      version: 1,
+      title: "page",
+      compactHeights: true,
+      blocks: [
+        { ...a, height: 480, collapsed: true, folds: sampleFolds },
+        { ...b, height: 120 },
+      ],
+    }),
+  );
+  const before = structuredClone(marked);
+  const result = migrateCompactHeights(marked);
+  assert.equal(result, marked);
+  assert.equal(result.compactHeights, true);
+  assert.equal(result.blocks[0].height, 480);
+  assert.equal(result.blocks[0].collapsed, true);
+  assert.deepEqual(result.blocks[0].folds, sampleFolds);
+  assert.equal(result.blocks[1].height, 120);
+  assertNoChange(result, marked, before);
+});
+
+test("migrateCompactHeights is identity on a second application", () => {
+  const input = freezeManifest(
+    structuredClone(
+      manifest([
+        { ...a, height: 360 },
+        { ...b, height: 90, collapsed: true },
+      ]),
+    ),
+  );
+  const once = migrateCompactHeights(input);
+  assert.equal(once.compactHeights, true);
+  assert.equal(once.blocks[0].height, 200);
+  const twice = migrateCompactHeights(once);
+  assert.equal(twice, once);
+  assert.equal(twice.blocks[0].height, 200);
+  assert.equal(twice.blocks[1].height, 200);
+  assert.equal(twice.blocks[1].collapsed, true);
+});
+
+test("migrateCompactHeights marks a zero-block manifest and does not add a block", () => {
+  const input = prepared([]);
+  const before = structuredClone(input);
+  const result = migrateCompactHeights(input);
+  assert.equal(result.compactHeights, true);
+  assert.deepEqual(result.blocks, []);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
+test("sanitizeManifest keeps compactHeights on the root", () => {
+  const input = freezeManifest(
+    structuredClone({
+      version: 1,
+      title: "page",
+      compactHeights: true,
+      blocks: [{ ...a, height: 480 }],
+    }),
+  );
+  const before = structuredClone(input);
+  const result = sanitizeManifest(input);
+  assert.equal(result.compactHeights, true);
+  assert.equal(result.blocks[0].height, 480);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  assertUntouched(input, before);
+});
+
+test("parseManifest keeps compactHeights so migrateCompactHeights does not reset saved heights", () => {
+  const value = {
+    version: 1,
+    title: "page",
+    compactHeights: true,
+    blocks: [{ ...a, height: 480, collapsed: true, folds: sampleFolds }],
+  };
+  const parsed = parseManifest(JSON.stringify(value));
+  assert.ok(parsed);
+  assert.equal(parsed.compactHeights, true);
+  assert.equal(parsed.blocks[0].height, 480);
+  const result = migrateCompactHeights(parsed);
+  assert.equal(result.compactHeights, true);
+  assert.equal(result.blocks[0].height, 480);
+  assert.equal(result.blocks[0].collapsed, true);
+  assert.deepEqual(result.blocks[0].folds, sampleFolds);
+});
+
+test("serialize then parse keeps compactHeights on a migrated manifest", () => {
+  const migrated = migrateCompactHeights(
+    freezeManifest(structuredClone(manifest([{ ...a, height: 360 }]))),
+  );
+  assert.equal(migrated.compactHeights, true);
+  const parsed = parseManifest(serializeManifest(migrated));
+  assert.ok(parsed);
+  assert.equal(parsed.compactHeights, true);
+  assert.equal(parsed.blocks[0].height, 200);
+  const again = migrateCompactHeights(parsed);
+  assert.equal(again.blocks[0].height, 200);
+  assert.equal(again.compactHeights, true);
 });

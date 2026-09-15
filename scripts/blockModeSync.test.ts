@@ -166,6 +166,52 @@ test("save then load round-trips block height and collapsed", () => {
   assert.equal(loaded.blocks[0].collapsed, true);
 });
 
+test("save then load round-trips compactHeights on the snapshot root", () => {
+  const storage = createMemoryStorage();
+  const input: BlockSnapshot = {
+    version: 1,
+    compactHeights: true,
+    blocks: [
+      {
+        id: "aaaaaa",
+        title: "Notes",
+        language: "markdown",
+        content: "body",
+        height: 480,
+      },
+    ],
+  };
+
+  saveBlockSnapshot("page-a", input, storage);
+  const loaded = loadBlockSnapshot("page-a", storage);
+  assert.ok(loaded);
+  assert.equal(loaded.compactHeights, true);
+  assert.equal(loaded.blocks[0].height, 480);
+});
+
+test("load of an older snapshot without compactHeights stays readable", () => {
+  const storage = createMemoryStorage();
+  storage.setItem(
+    `${PREFIX}page-a`,
+    JSON.stringify({
+      version: 1,
+      blocks: [
+        {
+          id: "aaaaaa",
+          title: "Notes",
+          language: "markdown",
+          content: "body",
+          height: 300,
+        },
+      ],
+    }),
+  );
+  const loaded = loadBlockSnapshot("page-a", storage);
+  assert.ok(loaded);
+  assert.equal(loaded.compactHeights, undefined);
+  assert.equal(loaded.blocks[0].height, 300);
+});
+
 test("load returns undefined for corrupt snapshot JSON", () => {
   const storage = createMemoryStorage({
     [`${PREFIX}page-a`]: "{not json",

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { decideManifestInit } from "./manifestInit";
 import {
   type BlockInfo,
   type BlockLayout,
@@ -7,6 +8,7 @@ import {
   type MoveDirection,
   addBlock as addBlockToManifest,
   createDefaultBlock,
+  migrateCompactHeights,
   migrateLegacyLayout as migrateLegacyLayoutInManifest,
   moveBlockBefore as moveBlockBeforeInManifest,
   moveBlock as moveBlockInManifest,
@@ -43,9 +45,7 @@ export function useManifest(
     },
   );
   const [manifest, setManifest] = useState<Manifest>({
-    version: 1,
-    title: fallbackManifest.current.title,
-    blocks: fallbackManifest.current.blocks,
+    ...fallbackManifest.current,
   });
   const [connection, setConnection] = useState<
     "connected" | "disconnected" | "desynchronized"
@@ -54,11 +54,16 @@ export function useManifest(
   const headlessRef = useRef<RustpadHeadless>();
   const lastValidManifest = useRef<Manifest>(fallbackManifest.current);
   const initialized = useRef(false);
+  const replayReady = useRef(false);
   const initialBlockRef = useRef(options.initialBlock);
   const initialManifestRef = useRef(options.initialManifest);
 
   useEffect(() => {
-    function initialize(text: string, headless: RustpadHeadless) {
+    function initialize(
+      text: string,
+      headless: RustpadHeadless,
+      firstFullReplayCompleted: boolean,
+    ) {
       const parsed = parseManifest(text);
       if (initialized.current) {
         // shortcut: rewrite unparseable or non-canonical server text after init because every client derives the same canonical text from the same raw text and replaceContent is a no-op when unchanged; ceiling: character-level OT carrying a structured manifest can only remove syntactic damage, not semantic damage (concurrent drag-reorder, one client deleting a block while another edits its title); replace when: concurrent structural edits are observed to leave a parseable manifest whose block set or order matches neither client's last write
@@ -73,28 +78,29 @@ export function useManifest(
         }
         return;
       }
-      if (parsed && parsed.blocks.length > 0) {
-        // Server already holds a manifest: the server is the source of truth.
-        // Never overwrite it with the local initial manifest, which would revert
-        // remote edits (e.g. blocks added by another client) and fight back and
-        // forth with other clients.
-        lastValidManifest.current = parsed;
-        setManifest(parsed);
-        initialized.current = true;
-        setReady(true);
+      const decision = decideManifestInit({
+        firstFullReplayCompleted,
+        authoritativeRawText: text,
+        parsed,
+        snapshot: initialManifestRef.current,
+        fallback: fallbackManifest.current,
+      });
+      if (decision.action !== "adopt") {
         return;
       }
-      // Server has no usable manifest (empty text, corrupt JSON, or zero blocks):
-      // seed it once from the local initial / fallback manifest.
-      if (!initialized.current) {
-        const init: Manifest =
-          initialManifestRef.current ?? fallbackManifest.current;
-        initialized.current = true;
-        lastValidManifest.current = init;
-        setManifest(init);
-        setReady(true);
-        headless.replaceContent(serializeManifest(init));
-        const block = init.blocks[0];
+      const next = decision.shouldMigrate
+        ? migrateCompactHeights(decision.manifest)
+        : decision.manifest;
+      lastValidManifest.current = next;
+      setManifest(next);
+      initialized.current = true;
+      setReady(true);
+      const seeded = parsed === null;
+      if (decision.shouldMigrate || seeded) {
+        headless.replaceContent(serializeManifest(next));
+      }
+      if (seeded) {
+        const block = next.blocks[0];
         if (initialBlockRef.current && block) {
           window.setTimeout(() => {
             const blockHeadless = new RustpadHeadless({
@@ -117,14 +123,22 @@ export function useManifest(
       onConnected: () => setConnection("connected"),
       onDisconnected: () => setConnection("disconnected"),
       onDesynchronized: () => setConnection("desynchronized"),
-      onContentReady: (text) => initialize(text, headless),
-      onContentChanged: (text) => initialize(text, headless),
+      onContentReady: (text) => {
+        replayReady.current = true;
+        initialize(text, headless, true);
+      },
+      // onContentChanged also fires during the first history replay; the latch
+      // stays false until onContentReady, then true so a later change can still
+      // initialize if the ready payload was unusable.
+      onContentChanged: (text) =>
+        initialize(text, headless, replayReady.current),
     });
     headlessRef.current = headless;
     return () => {
       headless.dispose();
       headlessRef.current = undefined;
       initialized.current = false;
+      replayReady.current = false;
       setReady(false);
     };
   }, [pageId]);
