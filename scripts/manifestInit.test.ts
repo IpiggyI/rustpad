@@ -9,6 +9,8 @@ import {
   type BlockInfo,
   type Manifest,
   migrateCompactHeights,
+  parseManifest,
+  removeBlock,
   serializeManifest,
 } from "../src/manifestOps.ts";
 
@@ -304,4 +306,51 @@ test("decideManifestInit does not seed when authoritative text is non-empty but 
   });
   assert.equal(decision.action, "unusable");
   assert.equal(applyDecision(decision), undefined);
+});
+
+test("removing the last block serializes to an empty array that decideManifestInit adopts", () => {
+  const last: Manifest = {
+    version: 1,
+    title: "empty",
+    compactHeights: true,
+    blocks: [a],
+  };
+  const afterRemove = removeBlock(last, "aaaaaa");
+  assert.deepEqual(afterRemove.blocks, []);
+  const text = serializeManifest(afterRemove);
+  const parsed = parseManifest(text);
+  assert.ok(parsed);
+  assert.deepEqual(parsed.blocks, []);
+  assert.equal(parsed.compactHeights, true);
+  const decision = decideManifestInit({
+    firstFullReplayCompleted: true,
+    authoritativeRawText: text,
+    parsed,
+    snapshot: fallback,
+    fallback,
+  });
+  assert.equal(decision.action, "adopt");
+  assert.equal(decision.shouldMigrate, false);
+  assert.equal(decision.manifest, parsed);
+  assert.deepEqual(decision.manifest.blocks, []);
+  const adopted = applyDecision(decision)!;
+  assert.deepEqual(adopted.blocks, []);
+  assert.equal(adopted.compactHeights, true);
+  assert.notEqual(adopted.blocks[0]?.id, "ffffff");
+});
+
+test("empty authoritative text still seeds after empty-page adoption is in place", () => {
+  const decision = decideManifestInit({
+    firstFullReplayCompleted: true,
+    authoritativeRawText: "",
+    parsed: null,
+    snapshot: undefined,
+    fallback,
+  });
+  assert.equal(decision.action, "adopt");
+  assert.equal(decision.manifest, fallback);
+  assert.equal(decision.manifest.blocks[0].id, "ffffff");
+  const adopted = applyDecision(decision)!;
+  assert.equal(adopted.blocks.length, 1);
+  assert.equal(adopted.blocks[0].id, "ffffff");
 });

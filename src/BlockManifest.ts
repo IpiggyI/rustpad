@@ -52,6 +52,7 @@ export function useManifest(
     "connected" | "disconnected" | "desynchronized"
   >("disconnected");
   const [ready, setReady] = useState(false);
+  const [unusable, setUnusable] = useState(false);
   const headlessRef = useRef<RustpadHeadless>();
   const lastValidManifest = useRef<Manifest>(fallbackManifest.current);
   const initialized = useRef(false);
@@ -86,9 +87,15 @@ export function useManifest(
         snapshot: initialManifestRef.current,
         fallback: fallbackManifest.current,
       });
-      if (decision.action !== "adopt") {
+      if (decision.action === "defer") {
         return;
       }
+      if (decision.action === "unusable") {
+        // Damaged non-empty text is not a new page; do not seed or replace it.
+        setUnusable(true);
+        return;
+      }
+      setUnusable(false);
       const next = decision.shouldMigrate
         ? migrateCompactHeights(decision.manifest)
         : decision.manifest;
@@ -141,6 +148,7 @@ export function useManifest(
       initialized.current = false;
       replayReady.current = false;
       setReady(false);
+      setUnusable(false);
     };
   }, [pageId]);
 
@@ -237,6 +245,7 @@ export function useManifest(
     manifest,
     connection,
     ready,
+    unusable,
     addBlock,
     addBlockAfter,
     updateTitle,

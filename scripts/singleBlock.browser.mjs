@@ -988,6 +988,7 @@ try {
     .locator('[data-block-panel="bbbbbb"]')
     .getByLabel("Remove block")
     .click();
+  await peer.locator("[data-confirm-delete-block]").click();
   await page.getByText("(2 blocks)", { exact: true }).waitFor();
   await page.waitForFunction(
     () =>

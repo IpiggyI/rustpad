@@ -369,6 +369,43 @@ test("removeBlock on an empty manifest returns an equivalent manifest", () => {
   assertNoChange(removeBlock(input, "aaaaaa"), input, before);
 });
 
+test("removeBlock of the last block yields an empty array that survives serialize and parse", () => {
+  const input = freezeManifest(
+    structuredClone({
+      version: 1,
+      title: "page",
+      compactHeights: true,
+      blocks: [a],
+    }),
+  );
+  const before = structuredClone(input);
+  const result = removeBlock(input, "aaaaaa");
+  assert.deepEqual(result.blocks, []);
+  assert.equal(result.compactHeights, true);
+  assert.equal(result.version, 1);
+  assert.equal(result.title, "page");
+  const parsed = parseManifest(serializeManifest(result));
+  assert.ok(parsed);
+  assert.deepEqual(parsed.blocks, []);
+  assert.equal(parsed.compactHeights, true);
+  assert.equal(parsed.version, 1);
+  assert.equal(parsed.title, "page");
+  assertUntouched(input, before);
+});
+
+test("removeBlock of the last unmarked block keeps the empty array through serialize and parse", () => {
+  const input = prepared([a]);
+  const before = structuredClone(input);
+  const result = removeBlock(input, "aaaaaa");
+  assert.deepEqual(result.blocks, []);
+  const parsed = parseManifest(serializeManifest(result));
+  assert.ok(parsed);
+  assert.deepEqual(parsed.blocks, []);
+  assert.equal(parsed.version, 1);
+  assert.equal(parsed.title, "page");
+  assertUntouched(input, before);
+});
+
 test("updateBlock patches title and language of the target only", () => {
   const input = prepared([a, b, c]);
   const before = structuredClone(input);

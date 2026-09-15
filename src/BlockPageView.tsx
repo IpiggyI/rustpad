@@ -1,4 +1,10 @@
 import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogOverlay,
   Box,
   Button,
   Container,
@@ -28,6 +34,7 @@ import {
 } from "react";
 import {
   VscAdd,
+  VscClose,
   VscCloudDownload,
   VscCopy,
   VscLayoutSidebarLeft,
@@ -133,6 +140,56 @@ function stopFieldBubble(event: { stopPropagation(): void }) {
   event.stopPropagation();
 }
 
+function DeleteBlockConfirm({
+  isOpen,
+  blockTitle,
+  onClose,
+  onConfirm,
+}: {
+  isOpen: boolean;
+  blockTitle: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <AlertDialog
+      isOpen={isOpen}
+      leastDestructiveRef={cancelRef}
+      onClose={onClose}
+    >
+      <AlertDialogOverlay>
+        <AlertDialogContent data-delete-block-dialog="">
+          <AlertDialogHeader>Delete block</AlertDialogHeader>
+
+          <AlertDialogBody>
+            Delete the block &quot;{blockTitle}&quot;?
+          </AlertDialogBody>
+
+          <AlertDialogFooter>
+            <Button
+              ref={cancelRef}
+              data-cancel-delete-block=""
+              onClick={onClose}
+            >
+              Cancel
+            </Button>
+            <Button
+              colorScheme="red"
+              data-confirm-delete-block=""
+              onClick={onConfirm}
+              ml={3}
+            >
+              Delete
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialogOverlay>
+    </AlertDialog>
+  );
+}
+
 function SidebarBlockRow({
   block,
   isCurrent,
@@ -141,6 +198,7 @@ function SidebarBlockRow({
   onSelect,
   onUpdateBlock,
   onNameBlur,
+  onRemove,
 }: {
   block: BlockInfo;
   isCurrent: boolean;
@@ -151,6 +209,7 @@ function SidebarBlockRow({
     patch: Partial<Pick<BlockInfo, "title" | "language">>,
   ) => void;
   onNameBlur: () => void;
+  onRemove: () => void;
 }) {
   return (
     <Flex
@@ -231,6 +290,21 @@ function SidebarBlockRow({
           </option>
         ))}
       </Select>
+      <IconButton
+        data-sidebar-remove-block={block.id}
+        aria-label="Remove block"
+        icon={<Icon as={VscClose} />}
+        size="xs"
+        variant="ghost"
+        color="red.400"
+        flexShrink={0}
+        onPointerDown={stopFieldBubble}
+        onMouseDown={stopFieldBubble}
+        onClick={(event) => {
+          stopFieldBubble(event);
+          onRemove();
+        }}
+      />
     </Flex>
   );
 }
@@ -319,6 +393,7 @@ function BlockPageView({
     moveBlock,
     moveBlockBefore,
     ready: manifestReady,
+    unusable: manifestUnusable,
   } = useManifest(id, {
     initialManifest: initialManifest.current,
   });
@@ -351,6 +426,10 @@ function BlockPageView({
   const lastPageIdRef = useRef<string | null>(null);
   const [currentBlockId, setCurrentBlockId] = useState<string | null>(null);
   const [namingBlockId, setNamingBlockId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
   const blockIdsKey = manifest.blocks.map((block) => block.id).join(",");
   const legacyLayouts = useMemo(
     () =>
@@ -405,6 +484,22 @@ function BlockPageView({
     setNamingBlockId(createdId);
   }, [addBlockAfter, commitCurrentBlock]);
 
+  const requestDeleteBlock = useCallback((block: BlockInfo) => {
+    setPendingDelete({ id: block.id, title: block.title });
+  }, []);
+
+  const cancelDeleteBlock = useCallback(() => {
+    setPendingDelete(null);
+  }, []);
+
+  const confirmDeleteBlock = useCallback(() => {
+    if (!pendingDelete) return;
+    const blockId = pendingDelete.id;
+    setPendingDelete(null);
+    clearLegacyLayout(id, blockId);
+    removeBlock(blockId);
+  }, [id, pendingDelete, removeBlock]);
+
   useEffect(() => {
     if (!currentBlockId) return;
     const frame = requestAnimationFrame(() => {
@@ -444,6 +539,13 @@ function BlockPageView({
       saveCurrentBlockId(id, next);
     }
   }, [blockIdsKey, id, manifestReady]);
+
+  useEffect(() => {
+    if (!pendingDelete) return;
+    if (!manifest.blocks.some((block) => block.id === pendingDelete.id)) {
+      setPendingDelete(null);
+    }
+  }, [manifest.blocks, pendingDelete]);
 
   const captureBlockSnapshot = useCallback(() => {
     if (snapshotBlocksRef.current.size === 0) {
@@ -876,7 +978,11 @@ function BlockPageView({
             >
               Add Block
             </Button>
-            {manifestReady ? (
+            {manifestUnusable ? (
+              <Text color={darkMode ? "#888" : "#666"}>
+                The block list could not be read.
+              </Text>
+            ) : manifestReady ? (
               manifest.blocks.map((block) => {
                 const isCurrent = block.id === currentBlockId;
                 return (
@@ -893,6 +999,7 @@ function BlockPageView({
                         current === block.id ? null : current,
                       );
                     }}
+                    onRemove={() => requestDeleteBlock(block)}
                   />
                 );
               })
@@ -995,7 +1102,18 @@ function BlockPageView({
               Add Block
             </Button>
 
-            {manifestReady ? (
+            {manifestUnusable ? (
+              <Text
+                data-manifest-unusable=""
+                color={darkMode ? "#888" : "#666"}
+              >
+                The block list could not be read.
+              </Text>
+            ) : manifestReady && visibleManifest.blocks.length === 0 ? (
+              <Text data-empty-page="" color={darkMode ? "#888" : "#666"}>
+                This page has no blocks.
+              </Text>
+            ) : manifestReady ? (
               <Reorder.Group
                 as="div"
                 axis="y"
@@ -1034,10 +1152,7 @@ function BlockPageView({
                       onUpdateLayout={(layout) => {
                         updateBlockLayout(block.id, layout);
                       }}
-                      onRemoveBlock={() => {
-                        clearLegacyLayout(id, block.id);
-                        removeBlock(block.id);
-                      }}
+                      onRemoveBlock={() => requestDeleteBlock(block)}
                       onMoveBlock={(dir) => {
                         moveBlock(block.id, dir);
                       }}
@@ -1080,6 +1195,13 @@ function BlockPageView({
           </VStack>
         </Box>
       </Flex>
+
+      <DeleteBlockConfirm
+        isOpen={pendingDelete !== null}
+        blockTitle={pendingDelete?.title ?? ""}
+        onClose={cancelDeleteBlock}
+        onConfirm={confirmDeleteBlock}
+      />
     </Flex>
   );
 }

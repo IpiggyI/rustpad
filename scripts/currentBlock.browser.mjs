@@ -381,6 +381,7 @@ try {
     .locator('[data-block-panel="bbbbbb"]')
     .getByLabel("Remove block")
     .click();
+  await page.locator("[data-confirm-delete-block]").click();
   await page.getByText("(2 blocks)", { exact: true }).waitFor();
   await waitForCurrent(page, "cccccc");
   await waitForManifest(

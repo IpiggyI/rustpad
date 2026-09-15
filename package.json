@@ -10,7 +10,7 @@
     "serve": "vite preview",
     "format": "prettier --write .",
     "test": "node --test scripts/",
-    "test:browser": "node scripts/headingEnter.browser.mjs && node scripts/compactHeights.browser.mjs && node scripts/currentBlock.browser.mjs && node scripts/singleBlock.browser.mjs && node scripts/rustpadClose.browser.mjs && node scripts/sidebarBlocks.browser.mjs"
+    "test:browser": "node scripts/headingEnter.browser.mjs && node scripts/compactHeights.browser.mjs && node scripts/currentBlock.browser.mjs && node scripts/singleBlock.browser.mjs && node scripts/rustpadClose.browser.mjs && node scripts/sidebarBlocks.browser.mjs && node scripts/deleteBlock.browser.mjs"
   },
   "dependencies": {
     "@chakra-ui/react": "^2.10.4",
