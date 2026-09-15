@@ -1,14 +1,60 @@
+/**
+ * Prerequisites for `npm run test:browser`:
+ * - Run `npm ci` to install playwright-core. PLAYWRIGHT_MODULE may point to an
+ *   alternate Playwright module specifier or absolute module path.
+ * - Start the dev server with `npm run dev`. RUSTPAD_URL selects its URL
+ *   (default: http://127.0.0.1:5173).
+ * - Start the backend with `PORT=3030 cargo run -p rustpad-server` on
+ *   127.0.0.1:3030, the /api proxy target in vite.config.ts. RUSTPAD_URL selects
+ *   the frontend; it does not override that backend target.
+ * - Install Chromium with `npx playwright-core install chromium`, or set
+ *   CHROMIUM_PATH to the absolute path of an existing Chromium executable.
+ */
 import assert from "node:assert/strict";
 
-const { chromium } = await import(
-  process.env.PLAYWRIGHT_MODULE || "playwright-core"
-);
-const browser = await chromium.launch({
-  headless: true,
-  executablePath: process.env.CHROMIUM_PATH,
-  args: ["--no-sandbox"],
-});
 const base = process.env.RUSTPAD_URL || "http://127.0.0.1:5173";
+
+try {
+  const response = await fetch(base, { signal: AbortSignal.timeout(5000) });
+  await response.body?.cancel();
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+} catch (error) {
+  console.error(
+    `Cannot reach ${base}. The dev server must be running; start npm run dev or set RUSTPAD_URL.`,
+    error,
+  );
+  process.exit(1);
+}
+
+let chromium;
+try {
+  ({ chromium } = await import(
+    process.env.PLAYWRIGHT_MODULE || "playwright-core"
+  ));
+} catch (error) {
+  console.error(
+    "Cannot load Playwright. Run npm ci to install playwright-core, or set PLAYWRIGHT_MODULE to an available module.",
+    error,
+  );
+  process.exit(1);
+}
+
+let browser;
+try {
+  browser = await chromium.launch({
+    headless: true,
+    ...(process.env.CHROMIUM_PATH
+      ? { executablePath: process.env.CHROMIUM_PATH }
+      : {}),
+    args: ["--no-sandbox"],
+  });
+} catch (error) {
+  console.error(
+    "A Chromium binary was not found or could not be launched. Set CHROMIUM_PATH to a Chromium executable, or run npx playwright-core install chromium.",
+    error,
+  );
+  process.exit(1);
+}
 
 async function open(context, url) {
   const page = await context.newPage();
