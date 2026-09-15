@@ -46,6 +46,12 @@ import ConnectionStatus from "./ConnectionStatus";
 import Footer from "./Footer";
 import ImeInput from "./ImeInput";
 import { loadBlockSnapshot, saveBlockSnapshot } from "./blockModeSync";
+import {
+  chooseReplacementBlockId,
+  loadCurrentBlockId,
+  resolveCurrentBlockId,
+  saveCurrentBlockId,
+} from "./currentBlock";
 import languageExtensions from "./extensions";
 import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
@@ -196,6 +202,10 @@ function BlockPageView({
     initialManifest: initialManifest.current,
   });
   const liveBlockContents = useRef<Record<string, string>>({});
+  const currentBlockIdRef = useRef<string | null>(null);
+  const lastOrderRef = useRef<string[]>([]);
+  const lastPageIdRef = useRef<string | null>(null);
+  const [currentBlockId, setCurrentBlockId] = useState<string | null>(null);
   const blockIdsKey = manifest.blocks.map((block) => block.id).join(",");
   const legacyLayouts = useMemo(
     () =>
@@ -222,6 +232,55 @@ function BlockPageView({
     snapshotBlocksRef.current = new Map();
     setDragOrderIds(null);
   }, [id]);
+
+  const commitCurrentBlock = useCallback(
+    (next: string | null) => {
+      currentBlockIdRef.current = next;
+      setCurrentBlockId(next);
+      saveCurrentBlockId(id, next);
+    },
+    [id],
+  );
+
+  const selectBlockFromSidebar = useCallback(
+    (blockId: string) => {
+      commitCurrentBlock(blockId);
+      const panel = document.querySelector(
+        `[data-block-panel="${CSS.escape(blockId)}"]`,
+      );
+      panel?.scrollIntoView({ block: "start", inline: "nearest" });
+    },
+    [commitCurrentBlock],
+  );
+
+  useEffect(() => {
+    if (!manifestReady) return;
+    const blocks = blocksRef.current;
+    const ids = blocks.map((block) => block.id);
+    if (lastPageIdRef.current !== id) {
+      lastPageIdRef.current = id;
+      lastOrderRef.current = [];
+      currentBlockIdRef.current = loadCurrentBlockId(id);
+    }
+    const previous = lastOrderRef.current;
+    const candidate = currentBlockIdRef.current;
+    const next =
+      candidate != null &&
+      !ids.includes(candidate) &&
+      previous.includes(candidate)
+        ? chooseReplacementBlockId(
+            previous.map((blockId) => ({ id: blockId })),
+            blocks,
+            candidate,
+          )
+        : resolveCurrentBlockId(candidate, blocks);
+    lastOrderRef.current = ids;
+    currentBlockIdRef.current = next;
+    setCurrentBlockId(next);
+    if (loadCurrentBlockId(id) !== next) {
+      saveCurrentBlockId(id, next);
+    }
+  }, [blockIdsKey, id, manifestReady]);
 
   const captureBlockSnapshot = useCallback(() => {
     if (snapshotBlocksRef.current.size === 0) {
@@ -643,16 +702,45 @@ function BlockPageView({
           <Heading mt={4} mb={1.5} size="sm">
             Blocks
           </Heading>
-          <Stack spacing={1} fontSize="sm">
+          <Stack as="nav" aria-label="Blocks" spacing={1} fontSize="sm">
             {manifestReady ? (
-              manifest.blocks.map((block) => (
-                <Text key={block.id} noOfLines={1}>
-                  {block.title}{" "}
-                  <Text as="span" color={darkMode ? "#888" : "#999"}>
-                    ({block.language})
-                  </Text>
-                </Text>
-              ))
+              manifest.blocks.map((block) => {
+                const isCurrent = block.id === currentBlockId;
+                return (
+                  <Button
+                    key={block.id}
+                    data-block-id={block.id}
+                    aria-current={isCurrent ? "true" : undefined}
+                    variant="ghost"
+                    size="sm"
+                    h="auto"
+                    minH={0}
+                    py={1}
+                    px={2}
+                    w="full"
+                    justifyContent="flex-start"
+                    fontWeight={isCurrent ? "semibold" : "normal"}
+                    bgColor={
+                      isCurrent
+                        ? darkMode
+                          ? "#37373d"
+                          : "gray.200"
+                        : "transparent"
+                    }
+                    _hover={{
+                      bgColor: darkMode ? "#323232" : "gray.100",
+                    }}
+                    onClick={() => selectBlockFromSidebar(block.id)}
+                  >
+                    <Text as="span" noOfLines={1}>
+                      {block.title}{" "}
+                      <Text as="span" color={darkMode ? "#888" : "#999"}>
+                        ({block.language})
+                      </Text>
+                    </Text>
+                  </Button>
+                );
+              })
             ) : (
               <Text color={darkMode ? "#888" : "#666"}>Loading...</Text>
             )}
@@ -714,7 +802,7 @@ function BlockPageView({
           </Text>
         </HStack>
 
-        <Box flex={1} overflowY="auto" px={4} py={2}>
+        <Box flex={1} overflowY="auto" px={4} py={2} data-block-scroll="">
           <VStack spacing={3} align="stretch">
             <Button
               leftIcon={<VscAdd />}
@@ -772,6 +860,10 @@ function BlockPageView({
                       onContentChange={(content) =>
                         rememberBlockContent(block.id, content)
                       }
+                      onEdited={() => {
+                        if (currentBlockIdRef.current === block.id) return;
+                        commitCurrentBlock(block.id);
+                      }}
                       onCopyBlock={() => handleCopyBlock(block.id, block.title)}
                       onExportBlock={() =>
                         handleExportBlock(block.id, block.title, block.language)

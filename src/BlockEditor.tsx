@@ -63,6 +63,7 @@ type BlockEditorProps = {
   onRemoveBlock: () => void;
   onMoveBlock: (direction: MoveDirection) => void;
   onContentChange: (content: string) => void;
+  onEdited?: () => void;
   onCopyBlock: () => void;
   onExportBlock: () => void;
   onDragHandlePointerDown: (event: React.PointerEvent) => void;
@@ -79,6 +80,7 @@ function BlockEditor({
   onRemoveBlock,
   onMoveBlock,
   onContentChange,
+  onEdited,
   onCopyBlock,
   onExportBlock,
   onDragHandlePointerDown,
@@ -99,6 +101,7 @@ function BlockEditor({
   // depending on it would dispose+recreate the Rustpad connection (and reset the
   // model) on every parent render.
   const onContentChangeRef = useRef(onContentChange);
+  const onEditedRef = useRef(onEdited);
   const onUpdateLayoutRef = useRef(onUpdateLayout);
   const foldsRef = useRef(block.folds);
   const lastSavedFoldsRef = useRef(block.folds);
@@ -106,6 +109,7 @@ function BlockEditor({
   const restoringFoldsRef = useRef(false);
   useEffect(() => {
     onContentChangeRef.current = onContentChange;
+    onEditedRef.current = onEdited;
   });
   onUpdateLayoutRef.current = onUpdateLayout;
   foldsRef.current = block.folds;
@@ -167,8 +171,11 @@ function BlockEditor({
   useEffect(() => {
     if (!editorInstance) return;
     onContentChangeRef.current(editorInstance.getValue());
-    const disposable = editorInstance.onDidChangeModelContent(() => {
+    const disposable = editorInstance.onDidChangeModelContent((event) => {
       onContentChangeRef.current(editorInstance.getValue());
+      if (!event.isFlush && editorInstance.hasTextFocus()) {
+        onEditedRef.current?.();
+      }
     });
     return () => disposable.dispose();
   }, [editorInstance]);
@@ -308,6 +315,7 @@ function BlockEditor({
 
   return (
     <Box
+      data-block-panel={block.id}
       border="1px solid"
       borderColor={darkMode ? "#444" : "#ddd"}
       borderRadius="md"
