@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "discussion_id": "mobile-fixes-review",
+  "slug": "mobile-fixes-review",
+  "topic": "Mobile paste desync and sidebar drawer fixes",
+  "mode": "review",
+  "host": "claude",
+  "round": 1,
+  "max_rounds": 1,
+  "status": "closed",
+  "next_actor": "user",
+  "last_dispatch": "round-1 synthesized: codex verdict ready-to-build, 0 blocking, 2 non-blocking accepted",
+  "ledger": [
+    {
+      "id": "OBJ-1",
+      "claim": "多光标合并→远端光标显示精度(非阻断;同步正确性不受影响)",
+      "status": "agreed",
+      "round": 1,
+      "participant_ref": "round-1/codex.md",
+      "synthesis_ref": "round-1/synthesis.md",
+      "user_decision": "accept"
+    },
+    {
+      "id": "OBJ-2",
+      "claim": "移动端默认折叠仅首访生效/共享 localStorage 键(非阻断;符合 first-visit-only 边界)",
+      "status": "agreed",
+      "round": 1,
+      "participant_ref": "round-1/codex.md",
+      "synthesis_ref": "round-1/synthesis.md",
+      "user_decision": "accept"
+    }
+  ],
+  "open_items": []
+}
