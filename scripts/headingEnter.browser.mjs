@@ -84,6 +84,13 @@ async function snapshot(page) {
       ._getViewModel()
       .getHiddenAreas()
       .map((r) => [r.startLineNumber, r.endLineNumber]),
+    // What the user actually sees. The view keeps its own line mapping, and it
+    // can drop the new heading while the hidden ranges still read correctly.
+    visible: [...ed.getDomNode().querySelectorAll(".view-line")]
+      .map((el) => ({ top: parseInt(el.style.top, 10), text: el.textContent }))
+      .sort((a, b) => a.top - b.top)
+      // Monaco renders a trailing space as a non-breaking space.
+      .map((line) => line.text.replace(/\u00a0/g, " ")),
   }));
 }
 
@@ -101,6 +108,62 @@ async function prepare(page, text, end, collapsed = true) {
   );
   await page.waitForTimeout(350);
   assert.deepEqual((await snapshot(page)).hidden, collapsed ? [[2, end]] : []);
+  return snapshot(page);
+}
+
+/**
+ * Fold, then change the document while Monaco's debounced folding computation is
+ * held back, so its FoldingRegions line numbers are provably out of date when
+ * Enter arrives. Returns the stale and live spans of the folded region.
+ */
+async function holdFoldingThenEdit(page, { text, foldLine, edit, caret }) {
+  await page.evaluate(
+    async ({ text, foldLine }) => {
+      await ed.getAction("editor.unfoldAll").run();
+      ed.setValue(text);
+      await ed.getContribution("editor.contrib.folding").getFoldingModel();
+      ed.setPosition({ lineNumber: foldLine, column: 1 });
+      await ed.getAction("editor.fold").run();
+    },
+    { text, foldLine },
+  );
+  await page.waitForTimeout(350);
+  return page.evaluate(
+    ({ edit, caret }) => {
+      const contribution = ed.getContribution("editor.contrib.folding");
+      const held = contribution.triggerFoldingModelChanged;
+      contribution.updateScheduler?.cancel?.();
+      contribution.foldingRegionPromise?.cancel?.();
+      contribution.triggerFoldingModelChanged = () => undefined;
+      window.releaseFolding = () => {
+        contribution.triggerFoldingModelChanged = held;
+        held.call(contribution);
+        window.releaseFolding = undefined;
+      };
+      ed.executeEdits("test.staleFolding", [
+        { range: new monaco.Range(...edit.range), text: edit.text },
+      ]);
+      ed.setPosition(caret);
+      ed.focus();
+      const folding = contribution.foldingModel;
+      const index = (() => {
+        for (let i = 0; i < folding.regions.length; i++)
+          if (folding.regions.isCollapsed(i)) return i;
+        return -1;
+      })();
+      const live = ed
+        .getModel()
+        .getDecorationRange(folding._editorDecorationIds[index]);
+      return {
+        stale: [
+          folding.regions.getStartLineNumber(index),
+          folding.regions.getEndLineNumber(index),
+        ],
+        live: [live.startLineNumber, live.endLineNumber],
+      };
+    },
+    { edit, caret },
+  );
 }
 
 async function exclusion(page, name, baseline) {
@@ -212,6 +275,7 @@ try {
         after: "###### Six\n\n###### ",
         end: 2,
         column: 8,
+        visible: ["###### Six", "###### "],
       },
       {
         name: "EOF",
@@ -219,6 +283,7 @@ try {
         after: "## 1\n111\n## ",
         end: 2,
         column: 4,
+        visible: ["## 1", "## "],
       },
       {
         name: "same-level",
@@ -226,6 +291,7 @@ try {
         after: "## Original\nbody\n## \n## Next\nnext body",
         end: 2,
         column: 4,
+        visible: ["## Original", "## ", "## Next", "next body"],
       },
       {
         name: "higher-level",
@@ -233,6 +299,7 @@ try {
         after: "### Original\nbody\n### \n# Next\nnext body",
         end: 2,
         column: 5,
+        visible: ["### Original", "### ", "# Next", "next body"],
       },
       {
         name: "nested",
@@ -240,6 +307,7 @@ try {
         after: "# Root\nbody\n## Child\nchild body\n### Leaf\nleaf body\n# ",
         end: 6,
         column: 3,
+        visible: ["# Root", "# "],
       },
     ]) {
       await prepare(page, scenario.before, scenario.end);
@@ -253,6 +321,7 @@ try {
         text: scenario.after,
         position: { lineNumber: scenario.end + 1, column: scenario.column },
         hidden: [[2, scenario.end]],
+        visible: scenario.visible,
       });
       await peer.waitForFunction(
         (text) => ed.getValue() === text,
@@ -272,6 +341,122 @@ try {
       );
       console.log(
         `PASS ${mode}: ${scenario.name}, text/caret/hidden ranges/undo/redo/peer`,
+      );
+    }
+    for (const scenario of [
+      {
+        name: "stale folding, line added above the fold",
+        before: "intro\n## A\naaa\n## B\nbbb",
+        foldLine: 2,
+        edit: { range: [1, 6, 1, 6], text: "\nmore" },
+        caret: { lineNumber: 3, column: 5 },
+        after: "intro\nmore\n## A\naaa\n## \n## B\nbbb",
+        position: { lineNumber: 5, column: 4 },
+        hidden: [[4, 4]],
+      },
+      {
+        name: "stale folding, line added inside the fold",
+        before: "## A\naaa\n## B\nbbb",
+        foldLine: 1,
+        edit: { range: [2, 4, 2, 4], text: "\nzzz" },
+        caret: { lineNumber: 1, column: 5 },
+        after: "## A\naaa\nzzz\n## \n## B\nbbb",
+        position: { lineNumber: 4, column: 4 },
+        hidden: [[2, 3]],
+      },
+    ]) {
+      const spans = await holdFoldingThenEdit(page, {
+        text: scenario.before,
+        foldLine: scenario.foldLine,
+        edit: scenario.edit,
+        caret: scenario.caret,
+      });
+      assert.notDeepEqual(spans.stale, spans.live, scenario.name);
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(400);
+      const held = await snapshot(page);
+      assert.deepEqual(
+        { text: held.text, position: held.position },
+        { text: scenario.after, position: scenario.position },
+        scenario.name,
+      );
+      const caretLine = held.position.lineNumber;
+      assert.equal(
+        held.hidden.some(
+          ([start, end]) => caretLine >= start && end >= caretLine,
+        ),
+        false,
+        `${scenario.name}: the new heading is hidden by the fold above it`,
+      );
+      assert.equal(
+        held.visible.includes(scenario.after.split("\n")[caretLine - 1]),
+        true,
+        `${scenario.name}: the new heading is missing from the view`,
+      );
+      await page.evaluate(() => window.releaseFolding?.());
+      await page.waitForTimeout(400);
+      assert.deepEqual((await snapshot(page)).hidden, scenario.hidden);
+      await peer.waitForFunction(
+        (text) => ed.getValue() === text,
+        scenario.after,
+      );
+      console.log(
+        `PASS ${mode}: ${scenario.name}, text/caret/hidden ranges/peer`,
+      );
+    }
+    if (mode === "block") {
+      // A collapsed span that no longer starts a heading must not reach the
+      // saved record: monaco carries it forward as a recovered region, which
+      // draws a folding arrow on a plain line on every later load.
+      await page.evaluate(async () => {
+        await ed.getAction("editor.unfoldAll").run();
+        ed.setValue("## A\nplain\nmore\n## B\nbbb");
+        const folding = await ed
+          .getContribution("editor.contrib.folding")
+          .getFoldingModel();
+        folding.applyMemento([
+          {
+            startLineNumber: 2,
+            endLineNumber: 3,
+            isCollapsed: true,
+            source: 0,
+          },
+        ]);
+      });
+      await page.waitForTimeout(500);
+      const regionStarts = (target) =>
+        target.evaluate(() => {
+          const folding = ed.getContribution(
+            "editor.contrib.folding",
+          ).foldingModel;
+          const starts = [];
+          for (let i = 0; folding && i < folding.regions.length; i++) {
+            if (folding.regions.isCollapsed(i))
+              starts.push(folding.regions.getStartLineNumber(i));
+          }
+          return starts;
+        });
+      assert.deepEqual(
+        await regionStarts(page),
+        [2],
+        "the stale span was not planted",
+      );
+      await page.evaluate(async () => {
+        ed.setPosition({ lineNumber: 1, column: 1 });
+        await ed.getAction("editor.fold").run();
+      });
+      await page.waitForTimeout(900);
+      const reopened = await open(context, url);
+      await reopened.waitForFunction(() => ed.getValue().startsWith("## A"));
+      await reopened.waitForTimeout(900);
+      assert.deepEqual(
+        await regionStarts(reopened),
+        [1],
+        "a folding arrow on a plain line survived into the saved record",
+      );
+      await reopened.close();
+      console.log(
+        `PASS ${mode}: a span on a plain line is dropped from the saved record`,
       );
     }
     for (const name of [
@@ -300,6 +485,7 @@ try {
       text: "## 1\n111\n## ",
       position: { lineNumber: 3, column: 4 },
       hidden: [[2, 2]],
+      visible: ["## 1", "## "],
     });
     console.log(`PASS ${mode}: plain Enter after composition ends`);
     await context.close();

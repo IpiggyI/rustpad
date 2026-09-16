@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { shouldPersistSingleDocFolds } from "../src/manifestOps.ts";
 import {
+  keepHeadingFolds,
   readFoldRecord,
   readFoldRecordSync,
   restoreFoldRecord,
@@ -17,8 +18,9 @@ const sampleFolds = [
   },
 ];
 
-function fakeEditor(foldingModel, contribution = {}) {
+function fakeEditor(foldingModel, contribution = {}, model = null) {
   return {
+    getModel: () => model,
     getContribution() {
       return {
         foldingModel,
@@ -146,4 +148,48 @@ test("restore retries while regions are empty then unsubscribes on match", async
   regionLength = 3;
   for (const listener of [...listeners]) listener();
   assert.equal(restoreCalls, restoresAfter);
+});
+
+const headingDoc = ["## 三、风险", "测试", "无。", "## "];
+
+test("a saved span on a plain line is dropped, heading spans are kept", () => {
+  assert.deepEqual(
+    keepHeadingFolds(headingDoc, [
+      { startLineNumber: 1, endLineNumber: 3, isCollapsed: true },
+      { startLineNumber: 2, endLineNumber: 3, isCollapsed: true },
+    ]),
+    [{ startLineNumber: 1, endLineNumber: 3, isCollapsed: true }],
+  );
+});
+
+test("a stale end line keeps the span, monaco maps it by its start line", () => {
+  assert.deepEqual(
+    keepHeadingFolds(headingDoc, [
+      { startLineNumber: 1, endLineNumber: 2, isCollapsed: true },
+    ]),
+    [{ startLineNumber: 1, endLineNumber: 2, isCollapsed: true }],
+  );
+});
+
+test("a heading with no body owns no fold, so its span is dropped", () => {
+  assert.deepEqual(
+    keepHeadingFolds(headingDoc, [
+      { startLineNumber: 4, endLineNumber: 4, isCollapsed: true },
+    ]),
+    [],
+  );
+});
+
+test("a heading inside a code fence owns no fold", () => {
+  assert.deepEqual(
+    keepHeadingFolds(
+      ["# Real", "```", "## Fenced", "text", "```"],
+      [{ startLineNumber: 3, endLineNumber: 4, isCollapsed: true }],
+    ),
+    [],
+  );
+});
+
+test("a record that is not an array passes through untouched", () => {
+  assert.equal(keepHeadingFolds(headingDoc, undefined), undefined);
 });

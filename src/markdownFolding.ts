@@ -93,10 +93,19 @@ export function registerMarkdownFolding(m: Monaco) {
 
 const FOLDING_CONTRIBUTION_ID = "editor.contrib.folding";
 
+type FoldingRegionsHandle = {
+  readonly length: number;
+  isCollapsed(index: number): boolean;
+  getStartLineNumber(index: number): number;
+  getEndLineNumber(index: number): number;
+};
+
 type FoldingModelHandle = {
   getMemento(): unknown;
   applyMemento(state: unknown): void;
-  readonly regions?: { readonly length: number };
+  readonly regions?: FoldingRegionsHandle;
+  /** monaco-editor ^0.52.2 keeps one decoration per region, in region order. */
+  readonly _editorDecorationIds?: readonly string[];
   updatePost?: (regions: NonNullable<FoldingModelHandle["regions"]>) => void;
   onDidChange?: (listener: () => void) => { dispose(): void };
 };
@@ -171,27 +180,38 @@ export function isFoldingImeHeld(ed: monaco.editor.ICodeEditor): boolean {
   return foldingImeHeldEditors.has(ed);
 }
 
+/**
+ * FoldingRegions carries the line numbers of the last folding computation, and
+ * monaco-editor ^0.52.2 debounces that computation after every content change.
+ * Read each span from its decoration instead, which the text model moves with
+ * the edits — the same source FoldingModel uses when it recomputes.
+ */
+function collapsedRegionsOf(
+  ed: monaco.editor.ICodeEditor,
+  model: monaco.editor.ITextModel,
+): CollapsedRegion[] {
+  const folding = getFoldingContribution(ed)?.foldingModel;
+  const regions = folding?.regions;
+  if (!regions) return [];
+  const decorationIds = folding?._editorDecorationIds ?? [];
+  const collapsedRegions: CollapsedRegion[] = [];
+  for (let i = 0; i < regions.length; i++) {
+    if (!regions.isCollapsed(i)) continue;
+    const decorationId = decorationIds[i];
+    const live = decorationId ? model.getDecorationRange(decorationId) : null;
+    collapsedRegions.push({
+      startLineNumber: live?.startLineNumber ?? regions.getStartLineNumber(i),
+      endLineNumber: live?.endLineNumber ?? regions.getEndLineNumber(i),
+    });
+  }
+  return collapsedRegions;
+}
+
 function headingEnterEdit(ed: monaco.editor.ICodeEditor) {
   const model = ed.getModel();
   const selections = ed.getSelections();
   if (!model || !selections?.length || isFoldingImeHeld(ed)) return null;
-  const regions = getFoldingContribution(ed)?.foldingModel?.regions as
-    | {
-        length: number;
-        isCollapsed(index: number): boolean;
-        getStartLineNumber(index: number): number;
-        getEndLineNumber(index: number): number;
-      }
-    | undefined;
-  const collapsedRegions: CollapsedRegion[] = [];
-  for (let i = 0; regions && i < regions.length; i++) {
-    if (regions.isCollapsed(i)) {
-      collapsedRegions.push({
-        startLineNumber: regions.getStartLineNumber(i),
-        endLineNumber: regions.getEndLineNumber(i),
-      });
-    }
-  }
+  const collapsedRegions = collapsedRegionsOf(ed, model);
   return planHeadingEnter({
     lines: model.getLinesContent(),
     language: model.getLanguageId(),
@@ -237,10 +257,10 @@ function executeHeadingEnter(
   });
   const atEnd = edit.caretLineNumber === ed.getModel()!.getLineCount() + 1;
   ed.pushUndoStop();
-  ed.executeEdits("rustpad.headingEnter", [{ range, text: edit.text }], () => {
-    if (atEnd) refreshEofFolding(ed);
-    return [caret];
-  });
+  ed.executeEdits("rustpad.headingEnter", [{ range, text: edit.text }], () => [
+    caret,
+  ]);
+  if (atEnd) refreshEofFolding(ed);
   ed.pushUndoStop();
   ed.revealPositionInCenterIfOutsideViewport(caret.getPosition());
 }
@@ -362,18 +382,43 @@ export function attachFoldingImeHold(
   };
 }
 
+/**
+ * Keep only the spans that start where a heading fold starts now.
+ * monaco-editor ^0.52.2 carries a collapsed span that no longer matches any
+ * provided range forward as a "recovered" region, so one stale entry saved into
+ * a record puts a folding arrow on a plain line on every later load.
+ */
+export function keepHeadingFolds(lines: string[], record: unknown): unknown {
+  if (!Array.isArray(record)) return record;
+  const starts = new Set(
+    computeHeadingRanges(lines).map((range) => range.start),
+  );
+  return record.filter((span) =>
+    starts.has((span as { startLineNumber?: number })?.startLineNumber ?? -1),
+  );
+}
+
+function headingFoldsOnly(
+  ed: monaco.editor.ICodeEditor,
+  record: unknown,
+): unknown {
+  const model = ed.getModel();
+  if (!model || model.getLanguageId() !== "markdown") return record;
+  return keepHeadingFolds(model.getLinesContent(), record);
+}
+
 export async function readFoldRecord(
   ed: monaco.editor.ICodeEditor,
 ): Promise<unknown> {
   if (isFoldingImeHeld(ed)) return undefined;
-  return mementoFromHandle(await waitForFoldingModel(ed));
+  return headingFoldsOnly(ed, mementoFromHandle(await waitForFoldingModel(ed)));
 }
 
 /** Live folding-model memento; used on unmount where a debounce must not be dropped. */
 export function readFoldRecordSync(ed: monaco.editor.ICodeEditor): unknown {
   if (isFoldingImeHeld(ed)) return undefined;
   const contribution = getFoldingContribution(ed);
-  return mementoFromHandle(contribution?.foldingModel);
+  return headingFoldsOnly(ed, mementoFromHandle(contribution?.foldingModel));
 }
 
 function sameFoldSpan(left: unknown, right: unknown): boolean {
