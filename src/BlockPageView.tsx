@@ -168,19 +168,63 @@ function SidebarDropIndicator({
   );
 }
 
-function SidebarReorderMenu({
+const SIDEBAR_MENU_WIDTH_PX = 240;
+const SIDEBAR_MENU_MARGIN_PX = 8;
+
+/** Open beside the button, and stay inside the window on a narrow screen. */
+function place(
+  button: HTMLElement | null,
+  menu: HTMLElement | null,
+  setPos: (pos: { top: number; left: number }) => void,
+): void {
+  const rect = button?.getBoundingClientRect();
+  if (!rect) return;
+  const height = menu?.offsetHeight ?? 0;
+  const margin = SIDEBAR_MENU_MARGIN_PX;
+  setPos({
+    top: Math.max(
+      margin,
+      Math.min(rect.top, window.innerHeight - height - margin),
+    ),
+    left: Math.max(
+      margin,
+      Math.min(
+        rect.right + 4,
+        window.innerWidth - SIDEBAR_MENU_WIDTH_PX - margin,
+      ),
+    ),
+  });
+}
+
+function MenuDivider({ darkMode }: { darkMode: boolean }) {
+  return <Box h="1px" my={1} bgColor={darkMode ? "#444" : "gray.200"} />;
+}
+
+function SidebarBlockMenu({
   blockId,
+  language,
   darkMode,
   onMoveBlock,
+  onLanguageChange,
+  onRemove,
 }: {
   blockId: string;
+  language: string;
   darkMode: boolean;
   onMoveBlock: (direction: MoveDirection) => void;
+  onLanguageChange: (language: string) => void;
+  onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  // Chakra's Portal mounts its children after the first render, so the menu can
+  // only be measured once its node attaches.
+  const holdMenu = useCallback((node: HTMLDivElement | null) => {
+    menuRef.current = node;
+    if (node) place(buttonRef.current, node, setPos);
+  }, []);
   const menuItemBg = darkMode ? "#2d2d2d" : "white";
   const menuItemActive = { bgColor: darkMode ? "#3a3a3a" : "gray.100" };
   const items: {
@@ -196,11 +240,6 @@ function SidebarReorderMenu({
 
   useEffect(() => {
     if (!open) return;
-    const button = buttonRef.current;
-    if (button) {
-      const rect = button.getBoundingClientRect();
-      setPos({ top: rect.top, left: rect.right + 4 });
-    }
     const onDoc = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (
@@ -226,8 +265,8 @@ function SidebarReorderMenu({
     <>
       <IconButton
         ref={buttonRef}
-        data-sidebar-reorder-menu={blockId}
-        aria-label="Reorder block menu"
+        data-sidebar-block-menu={blockId}
+        aria-label="Block menu"
         aria-expanded={open ? "true" : undefined}
         icon={<Icon as={VscEllipsis} />}
         size="xs"
@@ -235,25 +274,24 @@ function SidebarReorderMenu({
         flexShrink={0}
         onPointerDown={stopFieldBubble}
         onMouseDown={stopFieldBubble}
+        color={darkMode ? "#999" : "#666"}
         onClick={(event) => {
           stopFieldBubble(event);
-          const rect = buttonRef.current?.getBoundingClientRect();
-          if (rect) {
-            setPos({ top: rect.top, left: rect.right + 4 });
-          }
+          place(buttonRef.current, menuRef.current, setPos);
           setOpen((current) => !current);
         }}
       />
       {open && (
         <Portal>
           <Box
-            ref={menuRef}
+            ref={holdMenu}
+            data-sidebar-menu={blockId}
             role="menu"
             position="fixed"
             top={`${pos.top}px`}
             left={`${pos.left}px`}
             zIndex={1500}
-            minW="12rem"
+            w={`${SIDEBAR_MENU_WIDTH_PX}px`}
             py={2}
             fontSize="sm"
             bgColor={darkMode ? "#2d2d2d" : "white"}
@@ -263,6 +301,37 @@ function SidebarReorderMenu({
             borderRadius="md"
             boxShadow="md"
           >
+            <Flex
+              align="center"
+              gap={2}
+              px={3}
+              pb={2}
+              onPointerDown={stopFieldBubble}
+              onMouseDown={stopFieldBubble}
+              onClick={stopFieldBubble}
+            >
+              <Text flexShrink={0}>Language</Text>
+              <Select
+                data-block-language={blockId}
+                aria-label="Block language"
+                size="xs"
+                variant="outline"
+                fontSize="xs"
+                flex="1 1 0"
+                minW={0}
+                bgColor={darkMode ? "#3c3c3c" : "white"}
+                borderColor={darkMode ? "#3c3c3c" : "gray.200"}
+                value={language}
+                onChange={(event) => onLanguageChange(event.target.value)}
+              >
+                {languages.map((lang) => (
+                  <option key={lang} value={lang} style={{ color: "black" }}>
+                    {lang}
+                  </option>
+                ))}
+              </Select>
+            </Flex>
+            <MenuDivider darkMode={darkMode} />
             {items.map((item) => (
               <Button
                 key={item.dir}
@@ -288,6 +357,30 @@ function SidebarReorderMenu({
                 {item.label}
               </Button>
             ))}
+            <MenuDivider darkMode={darkMode} />
+            <Button
+              role="menuitem"
+              data-sidebar-remove-block={blockId}
+              leftIcon={<Icon as={VscClose} />}
+              justifyContent="flex-start"
+              variant="ghost"
+              size="sm"
+              w="full"
+              borderRadius={0}
+              color="red.400"
+              bgColor={menuItemBg}
+              _hover={menuItemActive}
+              _focus={menuItemActive}
+              onPointerDown={stopFieldBubble}
+              onMouseDown={stopFieldBubble}
+              onClick={(event) => {
+                stopFieldBubble(event);
+                setOpen(false);
+                onRemove();
+              }}
+            >
+              Remove Block
+            </Button>
           </Box>
         </Portal>
       )}
@@ -442,20 +535,27 @@ function SidebarBlockRow({
   return (
     <Flex
       data-block-row={block.id}
+      data-block-id={block.id}
+      aria-current={isCurrent ? "true" : undefined}
       align="center"
       gap={1}
       minH={8}
-      px={1}
+      pr={1}
       borderRadius="md"
+      borderLeftWidth="2px"
+      borderLeftColor={
+        isCurrent ? (darkMode ? "blue.300" : "blue.500") : "transparent"
+      }
       opacity={isDragging ? 0.7 : 1}
       bgColor={isCurrent ? (darkMode ? "#37373d" : "gray.200") : "transparent"}
       _hover={{
         bgColor: darkMode ? "#323232" : "gray.100",
       }}
+      // The name fills the row, so a click on it selects the block as well.
       onClick={(event) => {
         if (
           event.target instanceof Element &&
-          event.target.closest("input, select, textarea, button")
+          event.target.closest("button, select")
         ) {
           return;
         }
@@ -469,6 +569,7 @@ function SidebarBlockRow({
         size="xs"
         variant="ghost"
         flexShrink={0}
+        color={darkMode ? "#999" : "#666"}
         cursor="grab"
         style={{ touchAction: "none" }}
         onPointerDown={(event) => {
@@ -478,32 +579,13 @@ function SidebarBlockRow({
         onMouseDown={stopFieldBubble}
         onClick={stopFieldBubble}
       />
-      <Button
-        data-block-id={block.id}
-        aria-current={isCurrent ? "true" : undefined}
-        aria-label={block.title}
-        variant="ghost"
-        size="sm"
-        minW={6}
-        h={7}
-        px={1}
-        flexShrink={0}
-        fontWeight={isCurrent ? "semibold" : "normal"}
-        onPointerDown={stopFieldBubble}
-        onMouseDown={stopFieldBubble}
-        onClick={(event) => {
-          stopFieldBubble(event);
-          onSelect();
-        }}
-      >
-        {isCurrent ? "●" : "○"}
-      </Button>
       <ImeInput
         data-block-name={block.id}
         aria-label="Block name"
         size="sm"
         variant="unstyled"
         fontSize="sm"
+        fontWeight={isCurrent ? "semibold" : "normal"}
         value={block.title}
         onValueChange={(title) => onUpdateBlock({ title })}
         flex="1 1 0"
@@ -512,53 +594,18 @@ function SidebarBlockRow({
         autoFocus={autoFocusName}
         onPointerDown={stopFieldBubble}
         onMouseDown={stopFieldBubble}
-        onClick={stopFieldBubble}
         onFocus={(event) => {
           if (autoFocusName) event.currentTarget.select();
         }}
         onBlur={onNameBlur}
       />
-      <Select
-        data-block-language={block.id}
-        aria-label="Block language"
-        size="xs"
-        variant="unstyled"
-        fontSize="xs"
-        value={block.language}
-        onChange={(event) => onUpdateBlock({ language: event.target.value })}
-        flex="0 0 6.5rem"
-        minW={0}
-        maxW="6.5rem"
-        color={darkMode ? "#999" : "#666"}
-        onPointerDown={stopFieldBubble}
-        onMouseDown={stopFieldBubble}
-        onClick={stopFieldBubble}
-      >
-        {languages.map((lang) => (
-          <option key={lang} value={lang} style={{ color: "black" }}>
-            {lang}
-          </option>
-        ))}
-      </Select>
-      <SidebarReorderMenu
+      <SidebarBlockMenu
         blockId={block.id}
+        language={block.language}
         darkMode={darkMode}
         onMoveBlock={onMoveBlock}
-      />
-      <IconButton
-        data-sidebar-remove-block={block.id}
-        aria-label="Remove block"
-        icon={<Icon as={VscClose} />}
-        size="xs"
-        variant="ghost"
-        color="red.400"
-        flexShrink={0}
-        onPointerDown={stopFieldBubble}
-        onMouseDown={stopFieldBubble}
-        onClick={(event) => {
-          stopFieldBubble(event);
-          onRemove();
-        }}
+        onLanguageChange={(language) => onUpdateBlock({ language })}
+        onRemove={onRemove}
       />
     </Flex>
   );
@@ -1284,116 +1331,113 @@ function BlockPageView({
           left={{ base: 0, sm: "auto" }}
           zIndex={{ base: 20, sm: "auto" }}
           bgColor={darkMode ? "#252526" : "#f3f3f3"}
+          display="flex"
+          flexDirection="column"
           overflowY="auto"
           maxW="full"
           lineHeight={1.4}
           py={4}
         >
-          <ConnectionStatus darkMode={darkMode} connection={connection} />
+          {/* Blocks scrolls on its own; this keeps the rest of the sidebar in
+              place, and still reachable when the window is too short for it. */}
+          <Box flexShrink={0}>
+            <ConnectionStatus darkMode={darkMode} connection={connection} />
 
-          <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
-            <Heading size="sm">Dark Mode</Heading>
-            <Switch isChecked={darkMode} onChange={onDarkModeChange} />
-          </Flex>
+            <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
+              <Heading size="sm">Dark Mode</Heading>
+              <Switch isChecked={darkMode} onChange={onDarkModeChange} />
+            </Flex>
 
-          <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
-            <Heading size="sm">Word Wrap</Heading>
-            <Switch
-              isChecked={wordWrap}
-              onChange={() => setWordWrap((prev) => !prev)}
-            />
-          </Flex>
+            <Flex justifyContent="space-between" mt={4} mb={1.5} w="full">
+              <Heading size="sm">Word Wrap</Heading>
+              <Switch
+                isChecked={wordWrap}
+                onChange={() => setWordWrap((prev) => !prev)}
+              />
+            </Flex>
 
-          <Button
-            size="sm"
-            colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
-            variant="outline"
-            mt={4}
-            w="full"
-            onClick={handleBlockModeChange}
-          >
-            Back to Document
-          </Button>
-
-          <Heading mt={4} mb={1.5} size="sm">
-            Document Title
-          </Heading>
-          <ImeInput
-            size="sm"
-            placeholder={id}
-            bgColor={darkMode ? "#3c3c3c" : "white"}
-            borderColor={darkMode ? "#3c3c3c" : "white"}
-            value={documentTitle}
-            isDisabled={!manifestReady}
-            onValueChange={handleDocumentTitleChange}
-          />
-
-          <Heading mt={4} mb={1.5} size="sm">
-            Share Link
-          </Heading>
-          <InputGroup size="sm">
-            <Input
-              readOnly
-              pr="3.5rem"
+            <Button
+              size="sm"
+              colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
               variant="outline"
+              mt={4}
+              w="full"
+              onClick={handleBlockModeChange}
+            >
+              Back to Document
+            </Button>
+
+            <Heading mt={4} mb={1.5} size="sm">
+              Document Title
+            </Heading>
+            <ImeInput
+              size="sm"
+              placeholder={id}
               bgColor={darkMode ? "#3c3c3c" : "white"}
               borderColor={darkMode ? "#3c3c3c" : "white"}
-              value={documentUrl}
+              value={documentTitle}
+              isDisabled={!manifestReady}
+              onValueChange={handleDocumentTitleChange}
             />
-            <InputRightElement width="3.5rem">
+
+            <Heading mt={4} mb={1.5} size="sm">
+              Share Link
+            </Heading>
+            <InputGroup size="sm">
+              <Input
+                readOnly
+                pr="3.5rem"
+                variant="outline"
+                bgColor={darkMode ? "#3c3c3c" : "white"}
+                borderColor={darkMode ? "#3c3c3c" : "white"}
+                value={documentUrl}
+              />
+              <InputRightElement width="3.5rem">
+                <Button
+                  h="1.4rem"
+                  size="xs"
+                  onClick={handleCopyLink}
+                  _hover={{ bg: darkMode ? "#575759" : "gray.200" }}
+                  bgColor={darkMode ? "#575759" : "gray.200"}
+                  color={darkMode ? "white" : "inherit"}
+                >
+                  Copy
+                </Button>
+              </InputRightElement>
+            </InputGroup>
+
+            <HStack mt={2} spacing={2} w="full">
               <Button
-                h="1.4rem"
-                size="xs"
-                onClick={handleCopyLink}
-                _hover={{ bg: darkMode ? "#575759" : "gray.200" }}
-                bgColor={darkMode ? "#575759" : "gray.200"}
-                color={darkMode ? "white" : "inherit"}
+                size="sm"
+                colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+                borderColor={darkMode ? "blue.400" : "blue.600"}
+                color={darkMode ? "blue.400" : "blue.600"}
+                variant="outline"
+                leftIcon={<VscCopy />}
+                flex={1}
+                isDisabled={!manifestReady || manifest.blocks.length === 0}
+                onClick={handleCopyAll}
               >
                 Copy
               </Button>
-            </InputRightElement>
-          </InputGroup>
+              <Button
+                size="sm"
+                colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+                borderColor={darkMode ? "blue.400" : "blue.600"}
+                color={darkMode ? "blue.400" : "blue.600"}
+                variant="outline"
+                leftIcon={<VscCloudDownload />}
+                flex={1}
+                isDisabled={!manifestReady || manifest.blocks.length === 0}
+                onClick={handleExportAll}
+              >
+                Export
+              </Button>
+            </HStack>
 
-          <HStack mt={2} spacing={2} w="full">
-            <Button
-              size="sm"
-              colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
-              borderColor={darkMode ? "blue.400" : "blue.600"}
-              color={darkMode ? "blue.400" : "blue.600"}
-              variant="outline"
-              leftIcon={<VscCopy />}
-              flex={1}
-              isDisabled={!manifestReady || manifest.blocks.length === 0}
-              onClick={handleCopyAll}
-            >
-              Copy
-            </Button>
-            <Button
-              size="sm"
-              colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
-              borderColor={darkMode ? "blue.400" : "blue.600"}
-              color={darkMode ? "blue.400" : "blue.600"}
-              variant="outline"
-              leftIcon={<VscCloudDownload />}
-              flex={1}
-              isDisabled={!manifestReady || manifest.blocks.length === 0}
-              onClick={handleExportAll}
-            >
-              Export
-            </Button>
-          </HStack>
-
-          <Heading mt={4} mb={1.5} size="sm">
-            Blocks
-          </Heading>
-          <Stack
-            as="nav"
-            ref={sidebarNavRef}
-            aria-label="Blocks"
-            spacing={1}
-            fontSize="sm"
-            userSelect={sidebarDrag ? "none" : undefined}
-          >
+            <Heading mt={4} mb={1.5} size="sm">
+              Blocks
+            </Heading>
             <Button
               data-sidebar-add-block=""
               aria-label="Add block after current"
@@ -1402,11 +1446,25 @@ function BlockPageView({
               variant="outline"
               colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
               w="full"
+              mb={1}
               isDisabled={!manifestReady}
               onClick={handleSidebarAddBlock}
             >
               Add Block
             </Button>
+          </Box>
+
+          <Stack
+            as="nav"
+            ref={sidebarNavRef}
+            aria-label="Blocks"
+            spacing={1}
+            fontSize="sm"
+            flex="1 1 auto"
+            minH={40}
+            overflowY="auto"
+            userSelect={sidebarDrag ? "none" : undefined}
+          >
             {manifestUnusable ? (
               <Text color={darkMode ? "#888" : "#666"}>
                 The block list could not be read.
@@ -1455,13 +1513,15 @@ function BlockPageView({
             )}
           </Stack>
 
-          <Heading mt={4} mb={1.5} size="sm">
-            About
-          </Heading>
-          <Text fontSize="sm" mb={1.5}>
-            <strong>Rustpad</strong> block mode — each block is an independent
-            collaborative document. Add, reorder, or remove blocks as needed.
-          </Text>
+          <Box flexShrink={0}>
+            <Heading mt={4} mb={1.5} size="sm">
+              About
+            </Heading>
+            <Text fontSize="sm" mb={1.5}>
+              <strong>Rustpad</strong> block mode — each block is an independent
+              collaborative document. Add, reorder, or remove blocks as needed.
+            </Text>
+          </Box>
         </Container>
       )}
 

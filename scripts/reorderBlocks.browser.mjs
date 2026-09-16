@@ -286,7 +286,7 @@ const sidebarMoveAttr = {
 async function clickSidebarMove(page, blockId, name) {
   const direction = sidebarMoveAttr[name];
   assert.ok(direction, `unknown move ${name}`);
-  const button = page.locator(`[data-sidebar-reorder-menu="${blockId}"]`);
+  const button = page.locator(`[data-sidebar-block-menu="${blockId}"]`);
   await button.scrollIntoViewIfNeeded();
   await button.click();
   await page.locator(`[data-sidebar-move="${blockId}:${direction}"]`).click();
@@ -475,12 +475,13 @@ async function pointerDragHandle(
   return { insertBefore };
 }
 
-async function assertNoDragFrom(page, locator) {
+async function assertNoDragFrom(page, locator, at) {
   const before = await sidebarIds(page);
   const box = await locator.boundingBox();
   assert.ok(box);
-  const x = box.x + Math.min(8, box.width / 2);
-  const y = box.y + box.height / 2;
+  const point = at?.(box) ?? { x: box.x + Math.min(8, box.width / 2), y: 0 };
+  const x = point.x;
+  const y = at ? point.y : box.y + box.height / 2;
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x, y - 80, { steps: 10 });
@@ -696,14 +697,15 @@ try {
   console.log("PASS cancel: Escape and release outside commit nothing");
 
   await assertNoDragFrom(page, page.locator('[data-block-name="bbbbbb"]'));
-  await assertNoDragFrom(page, page.locator('[data-block-language="bbbbbb"]'));
   await assertNoDragFrom(
     page,
-    page.locator('[data-sidebar-reorder-menu="bbbbbb"]'),
+    page.locator('[data-sidebar-block-menu="bbbbbb"]'),
   );
+  // The row's own padding: its left edge is the drag handle, its middle the name.
   await assertNoDragFrom(
     page,
     page.locator('nav[aria-label="Blocks"] [data-block-id="bbbbbb"]'),
+    (box) => ({ x: box.x + box.width - 2, y: box.y + box.height / 2 }),
   );
   await page.locator('[data-block-panel="bbbbbb"] .monaco-editor').click();
   const bodyBox = await page
@@ -723,7 +725,7 @@ try {
   assert.equal(bodyDragStarted, false);
   assert.deepEqual(await sidebarIds(page), orderBeforeBody);
   console.log(
-    "PASS handle-only: name, language, menu, navigation, and body do not drag",
+    "PASS handle-only: name, menu, row padding, navigation, and body do not drag",
   );
 
   const committed = await fetchManifest(pageId);

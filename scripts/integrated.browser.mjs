@@ -280,8 +280,33 @@ async function typeSuffix(page, id, text) {
   await page.evaluate((id) => window.integratedEditor(id).pushUndoStop(), id);
 }
 
+async function openBlockMenu(page, id) {
+  await page.locator(`[data-sidebar-block-menu="${id}"]`).click();
+  await page.locator(`[data-block-language="${id}"]`).waitFor();
+}
+
+async function closeBlockMenu(page) {
+  await page.keyboard.press("Escape");
+  await page.locator("[data-sidebar-menu]").waitFor({ state: "detached" });
+}
+
+async function setBlockLanguage(page, id, language) {
+  await openBlockMenu(page, id);
+  await page.locator(`[data-block-language="${id}"]`).selectOption(language);
+  await closeBlockMenu(page);
+}
+
+async function blockLanguage(page, id) {
+  await openBlockMenu(page, id);
+  const value = await page
+    .locator(`[data-block-language="${id}"]`)
+    .inputValue();
+  await closeBlockMenu(page);
+  return value;
+}
+
 async function moveMenu(page, id, direction) {
-  await page.locator(`[data-sidebar-reorder-menu="${id}"]`).click();
+  await page.locator(`[data-sidebar-block-menu="${id}"]`).click();
   await page.locator(`[data-sidebar-move="${id}:${direction}"]`).click();
 }
 
@@ -304,6 +329,7 @@ async function dragBefore(page, moved, target) {
 }
 
 async function removeBlock(page, id) {
+  await openBlockMenu(page, id);
   await page.locator(`[data-sidebar-remove-block="${id}"]`).click();
   await page.locator("[data-delete-block-dialog]").waitFor();
   await page.locator("[data-confirm-delete-block]").click();
@@ -507,9 +533,7 @@ async function sidebarChain() {
   await page.locator(`[data-block-name="${created}"]`).fill("Session notes");
   await choices(page, created, "single");
   await assertIdentities(page);
-  await page
-    .locator(`[data-block-language="${created}"]`)
-    .selectOption("javascript");
+  await setBlockLanguage(page, created, "javascript");
   await choices(page, created, "single");
   await assertIdentities(page);
   await dragBefore(page, created, "aaaaaa");
@@ -846,9 +870,9 @@ async function sharedChanges() {
     "shared name did not arrive",
   );
   await unchanged();
-  await page.locator('[data-block-language="cccccc"]').selectOption("json");
+  await setBlockLanguage(page, "cccccc", "json");
   await waitForValue(
-    () => peer.locator('[data-block-language="cccccc"]').inputValue(),
+    () => blockLanguage(peer, "cccccc"),
     "json",
     "shared language did not arrive",
   );
@@ -1024,7 +1048,7 @@ async function narrowTouch() {
     "b00001",
     "phone sidebar tap did not navigate",
   );
-  await page.locator('[data-sidebar-reorder-menu="b00001"]').tap();
+  await page.locator('[data-sidebar-block-menu="b00001"]').tap();
   await page.locator('[data-sidebar-move="b00001:top"]').tap();
   await waitForValue(
     () => ids(page),

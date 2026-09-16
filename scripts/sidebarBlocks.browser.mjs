@@ -196,6 +196,16 @@ async function clickSidebarSelect(page, blockId) {
   await waitForCurrent(page, blockId);
 }
 
+async function openBlockMenu(page, blockId) {
+  await page.locator(`[data-sidebar-block-menu="${blockId}"]`).click();
+  await page.locator(`[data-block-language="${blockId}"]`).waitFor();
+}
+
+async function closeBlockMenu(page) {
+  await page.keyboard.press("Escape");
+  await page.locator("[data-sidebar-menu]").waitFor({ state: "detached" });
+}
+
 async function optionValues(locator) {
   return locator
     .locator("option")
@@ -267,9 +277,11 @@ try {
   await clickSidebarSelect(page, "bbbbbb");
   await waitForCurrent(peer, "aaaaaa");
 
+  await openBlockMenu(page, "bbbbbb");
   const sidebarLangs = await optionValues(
     page.locator('[data-block-language="bbbbbb"]'),
   );
+  await closeBlockMenu(page);
   const headerLangs = await optionValues(
     page.locator('[data-block-panel="bbbbbb"] select'),
   );
@@ -305,10 +317,12 @@ try {
     await page.locator(`[data-block-name="${createdId}"]`).inputValue(),
     "Untitled",
   );
+  await openBlockMenu(page, createdId);
   assert.equal(
     await page.locator(`[data-block-language="${createdId}"]`).inputValue(),
     "plaintext",
   );
+  await closeBlockMenu(page);
   await waitForCurrent(peer, "aaaaaa");
   console.log(
     "PASS create: sidebar add inserts after the current block and focuses the name",
@@ -340,7 +354,7 @@ try {
   const currentBeforeNameClick = await currentBlockId(page);
   assert.equal(currentBeforeNameClick, createdId);
   await page.locator('[data-block-name="aaaaaa"]').click();
-  assert.equal(await currentBlockId(page), createdId);
+  await waitForCurrent(page, "aaaaaa");
   await page.locator('[data-block-name="aaaaaa"]').fill("Notes");
   await page.waitForFunction(() => {
     const input = document.querySelector('[data-block-name="aaaaaa"]');
@@ -352,7 +366,7 @@ try {
       header.value === "Notes"
     );
   });
-  assert.equal(await currentBlockId(page), createdId);
+  assert.equal(await currentBlockId(page), "aaaaaa");
   const idsAfterRename = await sidebarIds(page);
   assert.deepEqual(idsAfterRename, ["aaaaaa", "bbbbbb", createdId, "cccccc"]);
   assert.equal(
@@ -365,9 +379,11 @@ try {
   );
   assert.notEqual("aaaaaa", createdId);
   console.log(
-    "PASS rename: duplicate names stay distinct; name click does not change current",
+    "PASS rename: duplicate names stay distinct; a name click selects that block",
   );
 
+  await clickSidebarSelect(page, createdId);
+  await openBlockMenu(page, createdId);
   await page
     .locator(`[data-block-language="${createdId}"]`)
     .selectOption("javascript");
@@ -381,6 +397,8 @@ try {
       header.value === "javascript"
     );
   }, createdId);
+  await closeBlockMenu(page);
+  await openBlockMenu(peer, createdId);
   await peer.waitForFunction((id) => {
     const sidebar = document.querySelector(`[data-block-language="${id}"]`);
     const header = document.querySelector(`[data-block-panel="${id}"] select`);
@@ -391,6 +409,7 @@ try {
       header.value === "javascript"
     );
   }, createdId);
+  await closeBlockMenu(peer);
   await waitForCurrent(peer, "aaaaaa");
   assert.equal(
     (await editorValue(peer, "aaaaaa"))?.includes("peer-keep"),

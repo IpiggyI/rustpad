@@ -229,6 +229,7 @@ function deleteDialog(page) {
 
 async function openDelete(page, blockId, from) {
   if (from === "sidebar") {
+    await page.locator(`[data-sidebar-block-menu="${blockId}"]`).click();
     await page.locator(`[data-sidebar-remove-block="${blockId}"]`).click();
   } else {
     await page
