@@ -49,6 +49,7 @@ import {
 import {
   attachHeadingEnter,
   isFoldingImeHeld,
+  observeFoldChanges,
   readFoldRecord,
   readFoldRecordSync,
   restoreFoldRecord,
@@ -260,6 +261,7 @@ function BlockEditor({
     restoringFoldsRef.current = true;
     lastGoodFoldsRef.current = undefined;
     const restoreAbort = new AbortController();
+    const restoreVersion = editorInstance.getModel()?.getVersionId();
 
     const persist = debounce(() => {
       if (cancelled || restoringFoldsRef.current) return;
@@ -282,7 +284,7 @@ function BlockEditor({
       });
     }, 200);
 
-    const hiddenAreas = editorInstance.onDidChangeHiddenAreas(() => {
+    const foldChanges = observeFoldChanges(editorInstance, () => {
       if (isFoldingImeHeld(editorInstance)) return;
       const live = readFoldRecordSync(editorInstance);
       if (live !== undefined) lastGoodFoldsRef.current = live;
@@ -296,7 +298,9 @@ function BlockEditor({
     ).finally(() => {
       if (!cancelled) {
         restoringFoldsRef.current = false;
-        persist.cancel();
+        if (editorInstance.getModel()?.getVersionId() !== restoreVersion)
+          persist();
+        else persist.cancel();
       }
     });
 
@@ -304,7 +308,7 @@ function BlockEditor({
       cancelled = true;
       restoreAbort.abort();
       const restoring = restoringFoldsRef.current;
-      hiddenAreas.dispose();
+      foldChanges.dispose();
       const next = flushFoldMementoOnUnmount(
         persist,
         editorInstance.getModel()?.getLanguageId(),

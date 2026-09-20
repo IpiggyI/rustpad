@@ -193,3 +193,33 @@ test("a heading inside a code fence owns no fold", () => {
 test("a record that is not an array passes through untouched", () => {
   assert.equal(keepHeadingFolds(headingDoc, undefined), undefined);
 });
+
+for (const change of ["version", "language", "model"]) {
+  test(`an asynchronous fold read cannot cross a ${change} change`, async () => {
+    let version = 1;
+    let language = "json";
+    const textModel = {
+      getVersionId: () => version,
+      getLanguageId: () => language,
+    };
+    let current = textModel;
+    let finish;
+    const pending = new Promise((resolve) => {
+      finish = resolve;
+    });
+    const folding = { regions: { length: 1 }, getMemento: () => sampleFolds };
+    const editor = {
+      getModel: () => current,
+      getContribution: () => ({
+        foldingModel: folding,
+        getFoldingModel: () => pending,
+      }),
+    };
+    const result = readFoldRecord(editor);
+    if (change === "version") version++;
+    if (change === "language") language = "xml";
+    if (change === "model") current = { ...textModel };
+    finish(folding);
+    assert.equal(await result, undefined);
+  });
+}

@@ -7,6 +7,7 @@ function isEmptyFoldRecord(value: unknown): boolean {
 type Monaco = typeof monaco;
 
 type CollapsedRegion = { startLineNumber: number; endLineNumber: number };
+type FoldRange = CollapsedRegion & { isCollapsed: boolean; source: number };
 
 export function planHeadingEnter(input: {
   lines: string[];
@@ -98,6 +99,7 @@ type FoldingRegionsHandle = {
   isCollapsed(index: number): boolean;
   getStartLineNumber(index: number): number;
   getEndLineNumber(index: number): number;
+  toFoldRange?(index: number): FoldRange;
 };
 
 type FoldingModelHandle = {
@@ -178,6 +180,40 @@ function mementoFromHandle(
 
 export function isFoldingImeHeld(ed: monaco.editor.ICodeEditor): boolean {
   return foldingImeHeldEditors.has(ed);
+}
+
+/** Hidden-area events omit edits that move existing folds or change checksums. */
+export function observeFoldChanges(
+  ed: monaco.editor.ICodeEditor,
+  onChange: () => void,
+): monaco.IDisposable {
+  let folding: FoldingModelHandle | null | undefined;
+  let subscription: { dispose(): void } | undefined;
+  const bind = () => {
+    const current = getFoldingContribution(ed)?.foldingModel;
+    if (current === folding) return;
+    subscription?.dispose();
+    folding = current;
+    subscription = current?.onDidChange?.(onChange);
+  };
+  const changed = () => {
+    bind();
+    onChange();
+  };
+  bind();
+  const listeners = [
+    ed.onDidChangeHiddenAreas(changed),
+    ed.onDidChangeModelContent(changed),
+    ed.onDidChangeModel(changed),
+    ed.onDidChangeModelLanguage(changed),
+    ed.onDidCompositionEnd(changed),
+  ];
+  return {
+    dispose() {
+      subscription?.dispose();
+      listeners.forEach((listener) => listener.dispose());
+    },
+  };
 }
 
 /**
@@ -411,7 +447,44 @@ export async function readFoldRecord(
   ed: monaco.editor.ICodeEditor,
 ): Promise<unknown> {
   if (isFoldingImeHeld(ed)) return undefined;
-  return headingFoldsOnly(ed, mementoFromHandle(await waitForFoldingModel(ed)));
+  const textModel = ed.getModel();
+  const version = textModel?.getVersionId();
+  const language = textModel?.getLanguageId();
+  const folding = await waitForFoldingModel(ed);
+  if (
+    isFoldingImeHeld(ed) ||
+    ed.getModel() !== textModel ||
+    textModel?.getVersionId() !== version ||
+    textModel?.getLanguageId() !== language
+  )
+    return undefined;
+  removeInvalidRecoveredFolds(ed, folding);
+  return headingFoldsOnly(ed, mementoFromHandle(folding));
+}
+
+function removeInvalidRecoveredFolds(
+  ed: monaco.editor.ICodeEditor,
+  folding: FoldingModelHandle | null,
+): void {
+  const textModel = ed.getModel();
+  const regions = folding?.regions;
+  if (textModel?.getLanguageId() !== "markdown" || !regions?.toFoldRange)
+    return;
+  const starts = new Set(
+    computeHeadingRanges(textModel.getLinesContent()).map((r) => r.start),
+  );
+  const kept = [];
+  for (let i = 0; i < regions.length; i++) {
+    const range = regions.toFoldRange(i);
+    // Monaco 0.52.2: 1 is an explicit manual fold; 2 is a recovered provider fold.
+    if (range.source !== 2 || starts.has(range.startLineNumber))
+      kept.push(range);
+  }
+  if (kept.length === regions.length) return;
+  const factory = regions.constructor as unknown as {
+    fromFoldRanges(ranges: FoldRange[]): FoldingRegionsHandle;
+  };
+  folding?.updatePost?.(factory.fromFoldRanges(kept));
 }
 
 /** Live folding-model memento; used on unmount where a debounce must not be dropped. */

@@ -33,6 +33,7 @@ import {
 import {
   attachHeadingEnter,
   isFoldingImeHeld,
+  observeFoldChanges,
   readFoldRecord,
   readFoldRecordSync,
   restoreFoldRecord,
@@ -258,6 +259,7 @@ function SingleDocView({
       : loadSingleDocFolds(id, sessionLanguage);
     lastSessionMementoRef.current = undefined;
     const restoreAbort = new AbortController();
+    const restoreVersion = editor.getModel()?.getVersionId();
 
     const commitSessionFolds = (
       next: unknown,
@@ -302,7 +304,7 @@ function SingleDocView({
       });
     }, 200);
 
-    const hiddenAreas = editor.onDidChangeHiddenAreas(() => {
+    const foldChanges = observeFoldChanges(editor, () => {
       if (isFoldingImeHeld(editor)) return;
       if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
       const live = readFoldRecordSync(editor);
@@ -317,14 +319,15 @@ function SingleDocView({
     ).finally(() => {
       if (!cancelled) {
         restoringFoldsRef.current = false;
-        persist.cancel();
+        if (editor.getModel()?.getVersionId() !== restoreVersion) persist();
+        else persist.cancel();
       }
     });
 
     return () => {
       cancelled = true;
       restoreAbort.abort();
-      hiddenAreas.dispose();
+      foldChanges.dispose();
       const restoring = restoringFoldsRef.current;
       const next = flushFoldMementoOnUnmount(
         persist,

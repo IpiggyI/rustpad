@@ -408,7 +408,7 @@ try {
       // A collapsed span that no longer starts a heading must not reach the
       // saved record: monaco carries it forward as a recovered region, which
       // draws a folding arrow on a plain line on every later load.
-      await page.evaluate(async () => {
+      const planted = await page.evaluate(async () => {
         await ed.getAction("editor.unfoldAll").run();
         ed.setValue("## A\nplain\nmore\n## B\nbbb");
         const folding = await ed
@@ -422,8 +422,10 @@ try {
             source: 0,
           },
         ]);
+        return (folding.getMemento() ?? []).map(
+          (range) => range.startLineNumber,
+        );
       });
-      await page.waitForTimeout(500);
       const regionStarts = (target) =>
         target.evaluate(() => {
           const folding = ed.getContribution(
@@ -436,11 +438,7 @@ try {
           }
           return starts;
         });
-      assert.deepEqual(
-        await regionStarts(page),
-        [2],
-        "the stale span was not planted",
-      );
+      assert.deepEqual(planted, [2], "the stale span was not planted");
       await page.evaluate(async () => {
         ed.setPosition({ lineNumber: 1, column: 1 });
         await ed.getAction("editor.fold").run();
