@@ -55,7 +55,11 @@ import {
   restoreFoldRecord,
 } from "./markdownFolding";
 import Rustpad, { UserInfo } from "./rustpad";
-import { flushFoldMementoOnUnmount } from "./singleDocFolds";
+import {
+  flushFoldMementoOnUnmount,
+  foldMementoForFlush,
+  subscribeFoldPersistFlush,
+} from "./singleDocFolds";
 import { getWsUri } from "./useHash";
 
 type BlockEditorProps = {
@@ -263,9 +267,32 @@ function BlockEditor({
     const restoreAbort = new AbortController();
     const restoreVersion = editorInstance.getModel()?.getVersionId();
 
+    const persistLive = () => {
+      if (isFoldingImeHeld(editorInstance)) return;
+      if (!editorInstance.getModel()) return;
+      const live = readFoldRecordSync(editorInstance);
+      if (live !== undefined) lastGoodFoldsRef.current = live;
+      const next = foldMementoForFlush(
+        editorInstance.getModel()?.getLanguageId(),
+        block.language,
+        live,
+        lastGoodFoldsRef.current,
+      );
+      if (
+        !shouldPersistSingleDocFolds(
+          next,
+          lastSavedFoldsRef.current,
+          restoringFoldsRef.current,
+        )
+      ) {
+        return;
+      }
+      lastSavedFoldsRef.current = next;
+      onUpdateLayoutRef.current({ folds: next });
+    };
+
     const persist = debounce(() => {
       if (cancelled || restoringFoldsRef.current) return;
-      if (isFoldingImeHeld(editorInstance)) return;
       void readFoldRecord(editorInstance).then((next) => {
         if (cancelled || restoringFoldsRef.current) return;
         if (isFoldingImeHeld(editorInstance)) return;
@@ -284,10 +311,16 @@ function BlockEditor({
       });
     }, 200);
 
+    const stopFlush = subscribeFoldPersistFlush(() => {
+      persist.cancel();
+      persistLive();
+    });
+
     const foldChanges = observeFoldChanges(editorInstance, () => {
       if (isFoldingImeHeld(editorInstance)) return;
       const live = readFoldRecordSync(editorInstance);
       if (live !== undefined) lastGoodFoldsRef.current = live;
+      persistLive();
       persist();
     });
 
@@ -298,13 +331,15 @@ function BlockEditor({
     ).finally(() => {
       if (!cancelled) {
         restoringFoldsRef.current = false;
-        if (editorInstance.getModel()?.getVersionId() !== restoreVersion)
+        if (editorInstance.getModel()?.getVersionId() !== restoreVersion) {
+          persistLive();
           persist();
-        else persist.cancel();
+        } else persist.cancel();
       }
     });
 
     return () => {
+      stopFlush();
       cancelled = true;
       restoreAbort.abort();
       const restoring = restoringFoldsRef.current;

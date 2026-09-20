@@ -247,6 +247,41 @@ export function flushFoldMementoOnUnmount(
   );
 }
 
+type FoldFlushTarget = {
+  addEventListener(type: string, listener: () => void): void;
+  removeEventListener(type: string, listener: () => void): void;
+};
+
+type FoldFlushDocument = FoldFlushTarget & { visibilityState: string };
+
+/**
+ * Tab close often skips React unmount. pagehide/beforeunload still run and
+ * must write the live memento; the debounced async read will not have finished.
+ */
+export function subscribeFoldPersistFlush(
+  flush: () => void,
+  target: FoldFlushTarget | undefined = typeof window === "undefined"
+    ? undefined
+    : window,
+  doc: FoldFlushDocument | null | undefined = typeof document === "undefined"
+    ? undefined
+    : document,
+): () => void {
+  if (!target) return () => {};
+  const onHide = () => flush();
+  target.addEventListener("pagehide", onHide);
+  target.addEventListener("beforeunload", onHide);
+  const onVis = () => {
+    if (doc?.visibilityState === "hidden") flush();
+  };
+  doc?.addEventListener("visibilitychange", onVis);
+  return () => {
+    target.removeEventListener("pagehide", onHide);
+    target.removeEventListener("beforeunload", onHide);
+    doc?.removeEventListener("visibilitychange", onVis);
+  };
+}
+
 /**
  * Init policy aligned with useManifest: seed only when the sidecar is
  * unusable and only before the first successful init; then the server wins.

@@ -45,12 +45,14 @@ import {
   type FoldSidecarState,
   applyFoldSidecarText,
   flushFoldMementoOnUnmount,
+  foldMementoForFlush,
   foldsSidecarId,
   loadAllLocalFolds,
   loadSingleDocFolds,
   mergeFoldLanguage,
   persistSingleDocFolds,
   serializeFoldMap,
+  subscribeFoldPersistFlush,
   writeFoldMapToCache,
 } from "./singleDocFolds";
 import { getWsUri } from "./useHash";
@@ -288,14 +290,29 @@ function SingleDocView({
       foldsHeadlessRef.current?.replaceContent(serializeFoldMap(map));
     };
 
+    const persistLive = () => {
+      if (isFoldingImeHeld(editor)) return;
+      const live = readFoldRecordSync(editor);
+      if (live !== undefined) lastSessionMementoRef.current = live;
+      commitSessionFolds(
+        foldMementoForFlush(
+          editor.getModel()?.getLanguageId(),
+          sessionLanguage,
+          live,
+          lastSessionMementoRef.current,
+        ),
+        restoringFoldsRef.current,
+        isFoldingImeHeld(editor),
+      );
+    };
+
     const persist = debounce(() => {
       if (cancelled || restoringFoldsRef.current) return;
-      if (isFoldingImeHeld(editor)) return;
-      if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
       void readFoldRecord(editor).then((next) => {
         if (cancelled || restoringFoldsRef.current) return;
         if (isFoldingImeHeld(editor)) return;
         if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
+        if (next !== undefined) lastSessionMementoRef.current = next;
         commitSessionFolds(
           next,
           restoringFoldsRef.current,
@@ -304,11 +321,17 @@ function SingleDocView({
       });
     }, 200);
 
+    const stopFlush = subscribeFoldPersistFlush(() => {
+      persist.cancel();
+      persistLive();
+    });
+
     const foldChanges = observeFoldChanges(editor, () => {
       if (isFoldingImeHeld(editor)) return;
       if (editor.getModel()?.getLanguageId() !== sessionLanguage) return;
       const live = readFoldRecordSync(editor);
       if (live !== undefined) lastSessionMementoRef.current = live;
+      persistLive();
       persist();
     });
 
@@ -319,12 +342,15 @@ function SingleDocView({
     ).finally(() => {
       if (!cancelled) {
         restoringFoldsRef.current = false;
-        if (editor.getModel()?.getVersionId() !== restoreVersion) persist();
-        else persist.cancel();
+        if (editor.getModel()?.getVersionId() !== restoreVersion) {
+          persistLive();
+          persist();
+        } else persist.cancel();
       }
     });
 
     return () => {
+      stopFlush();
       cancelled = true;
       restoreAbort.abort();
       foldChanges.dispose();

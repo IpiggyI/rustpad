@@ -217,3 +217,15 @@ PROBE_MODE=block PROBE_SCENARIO=prefix-newline PROBE_REFRESH_RECORD=1 node scrip
 `npm run test:browser`。本轮按受影响范围选择四个浏览器脚本，未重跑高度、侧栏增删和排序等其余独立脚本。组合检查仍观察到票 10 已记录的重复播种；本次未修复或关闭该问题。
 
 本机两个反馈场景已修复并验收。尚未部署，也未验证用户正在使用的站点、Windows 原生输入法和隔夜行为；浏览器组合输入模拟不等同于原生输入法验收。本票保留现场验证待补的状态。
+
+### 2026-09-20 补充：中间插入后立刻关页，下方折叠丢失
+
+用户在部署 `628acdb` 后报告：三个标题，上下两个折叠，在中间按回车写入几行，关闭再打开，下面那个标题展开。
+
+本机复现命令：`PROBE_SCENARIO=middle-enters-no-wait node scripts/probe-three-headings-reopen.mjs`。等待 400 毫秒再关页可以通过；等待 250 毫秒或立刻关页时，实时折叠已是第 8 至 9 行，服务端仍是第 5 至 6 行，重开后上方保留、下方展开。三轮均如此。这与“只展开被下移的那个标题”一致。
+
+上一轮只让采集覆盖正文变化，写出仍要等 200 毫秒去抖，并且还要等 Monaco 重新计算折叠。关页往往落在这个窗口里，卸载路径又不一定执行。`beforeunload` 此前只用于正文未确认提示，不写折叠。
+
+产品改为：正文或折叠一变就按实时记录写出；`pagehide` / `beforeunload` / 页面隐藏再补一次。异步读取仍用于清掉普通行上的自动恢复折叠。`scripts/foldMemory.browser.mjs` 增加 `middle-insert`，两种模式在写入到达服务端后立刻关页，断言 `## Bottom` 仍折叠。
+
+本机：该复现连续 3 轮通过；`foldMemory` 16 项、`headingEnter` 43 项、类型检查通过。用户站点未验证。

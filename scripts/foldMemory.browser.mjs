@@ -55,6 +55,7 @@ async function snapshot(page) {
         end: folding.regions.getEndLineNumber(i),
         collapsed: folding.regions.isCollapsed(i),
         source: folding.regions.getSource(i),
+        line: model.getLineContent(folding.regions.getStartLineNumber(i)),
         heading: /^#{1,6}\s/.test(
           model.getLineContent(folding.regions.getStartLineNumber(i)),
         ),
@@ -205,6 +206,76 @@ async function imeAndReopen(page, context, url) {
   await reopened.close();
 }
 
+async function middleInsertAndReopen(page, context, url) {
+  await page.evaluate(async () => {
+    await ed.getAction("editor.unfoldAll").run();
+    ed.setValue("## Top\ntop body\n## Mid\nmid body\n## Bottom\nbottom body");
+    await ed.getContribution("editor.contrib.folding").getFoldingModel();
+    ed.setPosition({ lineNumber: 1, column: 1 });
+    await ed.getAction("editor.fold").run();
+    ed.setPosition({ lineNumber: 5, column: 1 });
+    await ed.getAction("editor.fold").run();
+  });
+  await page.waitForTimeout(700);
+  assert.deepEqual((await snapshot(page)).hidden, [
+    [2, 2],
+    [6, 6],
+  ]);
+  await page.evaluate(() => {
+    ed.setPosition({
+      lineNumber: 4,
+      column: ed.getModel().getLineMaxColumn(4),
+    });
+    ed.focus();
+  });
+  for (const text of ["one", "two", "three"]) {
+    await page.keyboard.press("Enter");
+    await page.keyboard.insertText(text);
+  }
+  const live = () =>
+    page.evaluate(
+      () =>
+        ed
+          .getContribution("editor.contrib.folding")
+          .foldingModel.getMemento() ?? [],
+    );
+  const saved = async () => {
+    const hash = new URL(url).hash.slice(1);
+    const recordId = hash.startsWith("page:")
+      ? `${hash}:manifest`
+      : `folds:${hash}`;
+    const value = JSON.parse(
+      await (await fetch(`${base}/api/text/${recordId}`)).text(),
+    );
+    return hash.startsWith("page:") ? value.blocks[0].folds : value.markdown;
+  };
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    if (JSON.stringify(await live()) === JSON.stringify(await saved())) break;
+    await page.waitForTimeout(50);
+  }
+  assert.equal(
+    JSON.stringify(await live()),
+    JSON.stringify(await saved()),
+    "the moved fold record must reach the server before close",
+  );
+  await page.close();
+  const reopened = await open(context, url);
+  await reopened.waitForTimeout(1000);
+  const actual = await snapshot(reopened);
+  assert.equal(
+    actual.ranges.some((r) => r.collapsed && r.line.startsWith("## Top")),
+    true,
+    JSON.stringify(actual.ranges),
+  );
+  assert.equal(
+    actual.ranges.some((r) => r.collapsed && r.line.startsWith("## Bottom")),
+    true,
+    "the heading below the insert must stay folded after close",
+  );
+  await reopened.close();
+}
+
 async function remoteEdit(page, context, url) {
   await prepare(page, "## 原折叠\nbody\n## Next\nend", 1);
   const peerContext = await browser.newContext();
@@ -243,6 +314,7 @@ const cases = {
   "nested-clear": nestedAndClear,
   ime: imeAndReopen,
   remote: remoteEdit,
+  "middle-insert": middleInsertAndReopen,
 };
 
 try {

@@ -17,6 +17,7 @@ import {
   serializeFoldMap,
   singleDocFoldsKey,
   singleDocFoldsLegacyKey,
+  subscribeFoldPersistFlush,
   writeFoldMapToCache,
 } from "../src/singleDocFolds.ts";
 
@@ -316,6 +317,25 @@ test("unread flush keeps saved; a real clear flush is []", () => {
     foldMementoForFlush("markdown", "markdown", [], sampleFolds),
     [],
   );
+});
+
+test("page hide flushes even if the debounce has not fired", () => {
+  let flushes = 0;
+  const listeners = new Map();
+  const target = {
+    addEventListener(type, listener) {
+      listeners.set(type, listener);
+    },
+    removeEventListener(type) {
+      listeners.delete(type);
+    },
+  };
+  const stop = subscribeFoldPersistFlush(() => flushes++, target, null);
+  listeners.get("pagehide")();
+  listeners.get("beforeunload")();
+  assert.equal(flushes, 2);
+  stop();
+  assert.equal(listeners.size, 0);
 });
 
 test("block-style unmount: debounce cancelled, last-good still flushed", () => {
