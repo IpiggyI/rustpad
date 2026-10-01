@@ -33,7 +33,8 @@ if curl --silent --output /dev/null --max-time 2 http://127.0.0.1:3030/api/stats
 fi
 
 step="读取 Windows 临时目录"
-windows_temp=$(cmd.exe /C 'echo %TEMP%' | tr -d '\r' | tail -n 1)
+cmd_dir=$(dirname "$(command -v cmd.exe)")
+windows_temp=$( (cd "$cmd_dir" && cmd.exe /C 'echo %TEMP%') | tr -d '\r' | tail -n 1)
 [[ -n "$windows_temp" && "$windows_temp" != '%TEMP%' ]]
 temp_dir=$(wslpath -u "$windows_temp")
 workdir=$(mktemp -d "$temp_dir/rustpad-intranet-check.XXXXXXXX")

@@ -23,7 +23,8 @@ run_step "检查前端" npm run check
 run_step "构建前端" npm run build
 
 step="读取 Windows 临时目录"
-windows_temp=$(cmd.exe /C 'echo %TEMP%' | tr -d '\r' | tail -n 1)
+cmd_dir=$(dirname "$(command -v cmd.exe)")
+windows_temp=$( (cd "$cmd_dir" && cmd.exe /C 'echo %TEMP%') | tr -d '\r' | tail -n 1)
 [[ -n "$windows_temp" && "$windows_temp" != '%TEMP%' ]]
 temp_dir=$(wslpath -u "$windows_temp")
 build_dir="$temp_dir/rustpad-intranet-build"
@@ -33,7 +34,7 @@ step="查找 Windows cargo.exe"
 if [[ -n "${CARGO_EXE:-}" ]]; then
   cargo_exe=$CARGO_EXE
 else
-  user_profile=$(cmd.exe /C 'echo %USERPROFILE%' | tr -d '\r' | tail -n 1)
+  user_profile=$( (cd "$cmd_dir" && cmd.exe /C 'echo %USERPROFILE%') | tr -d '\r' | tail -n 1)
   [[ -n "$user_profile" && "$user_profile" != '%USERPROFILE%' ]]
   cargo_exe="$(wslpath -u "$user_profile")/.cargo/bin/cargo.exe"
 fi
@@ -67,7 +68,8 @@ with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as output:
             output.write(source, source.relative_to(dist.parent).as_posix())
     output.write(templates / ".env", ".env")
     instructions = (templates / "使用说明.txt").read_text(encoding="utf-8-sig")
-    output.writestr("使用说明.txt", b"\xef\xbb\xbf" + instructions.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
+    instructions = instructions.replace("\r\n", "\n").replace("\r", "\n")
+    output.writestr("使用说明.txt", b"\xef\xbb\xbf" + instructions.replace("\n", "\r\n").encode("utf-8"))
 PY
 
 printf '%s\n' "$zip_path"

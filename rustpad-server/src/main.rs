@@ -11,9 +11,13 @@ use rustpad_server::{database::Database, server, ServerConfig};
 #[tokio::main]
 async fn main() {
     if Path::new(".env").is_file() {
-        load_env_file(Path::new(".env")).ok();
-    } else {
-        dotenv::dotenv().ok();
+        if let Err(error) = load_env_file(Path::new(".env")) {
+            eprintln!("无法加载配置文件 .env：{error}");
+        }
+    } else if let Err(error) = dotenv::dotenv() {
+        if !matches!(&error, dotenv::Error::Io(cause) if cause.kind() == io::ErrorKind::NotFound) {
+            eprintln!("无法加载配置文件 .env：{error}");
+        }
     }
     pretty_env_logger::init();
 
