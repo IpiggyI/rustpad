@@ -3,6 +3,7 @@ import useLocalStorageState from "use-local-storage-state";
 
 import BlockPageView from "./BlockPageView";
 import Footer from "./Footer";
+import HomePage from "./HomePage";
 import SingleDocView from "./SingleDocView";
 import { useHashInfo } from "./useHash";
 
@@ -34,7 +35,9 @@ function App() {
       >
         Rustpad
       </Box>
-      {hashInfo.mode === "single" ? (
+      {hashInfo.mode === "home" ? (
+        <HomePage darkMode={darkMode} />
+      ) : hashInfo.mode === "single" ? (
         <SingleDocView
           id={hashInfo.id}
           darkMode={darkMode}

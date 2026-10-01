@@ -76,6 +76,7 @@ import {
 } from "./currentBlock";
 import languageExtensions from "./extensions";
 import languages from "./languages.json";
+import { recordRecentPage, updateRecentPageTitle } from "./recentPages";
 import type Rustpad from "./rustpad";
 import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
@@ -734,6 +735,9 @@ function BlockPageView({
   const currentBlockIdRef = useRef<string | null>(null);
   const lastOrderRef = useRef<string[]>([]);
   const lastPageIdRef = useRef<string | null>(null);
+  // Ready stays true for one commit after the page id changes, still holding
+  // the previous page's manifest. Copy a title only after ready has dropped.
+  const recentTitleAllowed = useRef(false);
   const [currentBlockId, setCurrentBlockId] = useState<string | null>(null);
   const [namingBlockId, setNamingBlockId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{
@@ -1077,6 +1081,20 @@ function BlockPageView({
     }
   }, [manifest.title, setDocumentTitle]);
 
+  useEffect(() => {
+    recentTitleAllowed.current = false;
+    recordRecentPage(id, Date.now());
+  }, [id]);
+
+  useEffect(() => {
+    if (!manifestReady) {
+      recentTitleAllowed.current = true;
+      return;
+    }
+    if (!recentTitleAllowed.current || manifest.title === undefined) return;
+    updateRecentPageTitle(id, manifest.title);
+  }, [id, manifest.title, manifestReady]);
+
   function handleDocumentTitleChange(title: string) {
     if (!manifestReady) return;
     setDocumentTitle(title);
@@ -1368,6 +1386,19 @@ function BlockPageView({
               Back to Document
             </Button>
 
+            <Button
+              size="sm"
+              colorScheme={darkMode ? "whiteAlpha" : "blackAlpha"}
+              variant="outline"
+              mt={2}
+              w="full"
+              onClick={() => {
+                window.location.hash = "";
+              }}
+            >
+              Home
+            </Button>
+
             <Heading mt={4} mb={1.5} size="sm">
               Document Title
             </Heading>
@@ -1376,6 +1407,7 @@ function BlockPageView({
               placeholder={id}
               bgColor={darkMode ? "#3c3c3c" : "white"}
               borderColor={darkMode ? "#3c3c3c" : "white"}
+              aria-label="Document Title"
               value={documentTitle}
               isDisabled={!manifestReady}
               onValueChange={handleDocumentTitleChange}

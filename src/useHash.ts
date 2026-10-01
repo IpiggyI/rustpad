@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 const idLen = 6;
 
-function generateId() {
+export function generateId() {
   let id = "";
   for (let i = 0; i < idLen; i++) {
     id += chars[Math.floor(Math.random() * chars.length)];
@@ -12,8 +12,23 @@ function generateId() {
 }
 
 export type HashInfo =
+  | { mode: "home" }
   | { mode: "single"; id: string }
   | { mode: "blocks"; id: string };
+
+export type HashRoute =
+  | { type: "home" }
+  | { type: "page"; id: string }
+  | { type: "single"; id: string }
+  | { type: "new-single" };
+
+/** Home for an empty hash. `#folds:` still allocates a fresh single document. */
+export function routeHash(parsed: ParsedHash): HashRoute {
+  if (parsed.type === "page") return { type: "page", id: parsed.id };
+  if (parsed.type === "single") return { type: "single", id: parsed.id };
+  if (parsed.type === "empty") return { type: "home" };
+  return { type: "new-single" };
+}
 
 export type ParsedHash =
   | { type: "empty" }
@@ -37,13 +52,10 @@ export function parseHashString(raw: string): ParsedHash {
 
 function parseHash(): HashInfo {
   const raw = window.location.hash ? window.location.hash.slice(1) : "";
-  const parsed = parseHashString(raw);
-  if (parsed.type === "page") {
-    return { mode: "blocks", id: parsed.id };
-  }
-  if (parsed.type === "single") {
-    return { mode: "single", id: parsed.id };
-  }
+  const route = routeHash(parseHashString(raw));
+  if (route.type === "page") return { mode: "blocks", id: route.id };
+  if (route.type === "single") return { mode: "single", id: route.id };
+  if (route.type === "home") return { mode: "home" };
   const id = generateId();
   window.history.replaceState(null, "", "#" + id);
   return { mode: "single", id };
@@ -69,7 +81,7 @@ export function getWsUri(id: string) {
 
 function useHash() {
   const info = useHashInfo();
-  return info.id;
+  return info.mode === "home" ? "" : info.id;
 }
 
 export default useHash;
