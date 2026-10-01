@@ -19,6 +19,7 @@ import { VscCloudDownload, VscCopy, VscRepo } from "react-icons/vsc";
 import ConnectionStatus from "./ConnectionStatus";
 import ImeInput from "./ImeInput";
 import User from "./User";
+import { copyText } from "./copyText";
 import languages from "./languages.json";
 import type { UserInfo } from "./rustpad";
 
@@ -70,7 +71,7 @@ function Sidebar({
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(documentUrl);
+      await copyText(documentUrl);
       toast({
         title: "Copied!",
         description: "Link copied to clipboard",

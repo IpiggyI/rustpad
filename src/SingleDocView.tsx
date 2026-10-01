@@ -24,6 +24,7 @@ import rustpadRaw from "../rustpad-server/src/rustpad.rs?raw";
 import ReadCodeConfirm from "./ReadCodeConfirm";
 import Sidebar from "./Sidebar";
 import animals from "./animals.json";
+import { copyText } from "./copyText";
 import languageExtensions from "./extensions";
 import languages from "./languages.json";
 import {
@@ -399,7 +400,7 @@ function SingleDocView({
     const content = editor?.getModel()?.getValue();
     if (content == null) return;
     try {
-      await navigator.clipboard.writeText(content);
+      await copyText(content);
       toast({
         title: "Copied!",
         description: "Content copied to clipboard",
