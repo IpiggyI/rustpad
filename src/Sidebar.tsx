@@ -7,7 +7,6 @@ import {
   Input,
   InputGroup,
   InputRightElement,
-  Link,
   Select,
   Stack,
   Switch,
@@ -237,16 +236,7 @@ function Sidebar({
         browser while seeing your changes in real time.
       </Text>
       <Text fontSize="sm" mb={1.5}>
-        Built using Rust and TypeScript. See the{" "}
-        <Link
-          color="blue.600"
-          fontWeight="semibold"
-          href="https://github.com/ekzhang/rustpad"
-          isExternal
-        >
-          GitHub repository
-        </Link>{" "}
-        for details.
+        Built using Rust and TypeScript.
       </Text>
 
       <Button

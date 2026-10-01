@@ -93,14 +93,14 @@ function linkCopyButton(page) {
 async function openEditor(page, url) {
   await page.goto(url);
   await page.waitForFunction(() => window.monaco?.editor.getEditors().length);
-  assert.match(
+  assert.deepEqual(
     await page.evaluate(() =>
       performance
         .getEntriesByType("resource")
         .map((entry) => entry.name)
-        .find((name) => name.includes("/min/vs/editor/editor.main.js")),
+        .filter((name) => new URL(name).host !== location.host),
     ),
-    /monaco-editor@0\.52\.2\//,
+    [],
   );
   await page.getByText("You are connected!", { exact: true }).waitFor();
 }
