@@ -4,6 +4,7 @@ pkg
 node_modules
 .DS_Store
 dist
+/release/
 *.local
 
 .vscode

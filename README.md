@@ -113,6 +113,10 @@ docker run --rm -dp 3030:3030 ekzhang/rustpad
 
 We deploy a public instance of this image using [Fly.io](https://fly.io/).
 
+On the `intranet` branch, run `bash scripts/package-intranet.sh` from WSL to
+build a Windows x64 zip. Check the zip on the Windows host with
+`bash scripts/check-intranet-release.sh release/<zip-name>.zip`.
+
 ## In the media
 
 - **July 11, 2021:** Featured in

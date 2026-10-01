@@ -1,14 +1,20 @@
 use std::{
-    io::{self, IsTerminal},
+    fs,
+    io::{self, IsTerminal, Write},
     net::{Ipv4Addr, SocketAddr, UdpSocket},
     path::Path,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use rustpad_server::{database::Database, server, ServerConfig};
 
 #[tokio::main]
 async fn main() {
-    dotenv::dotenv().ok();
+    if Path::new(".env").is_file() {
+        load_env_file(Path::new(".env")).ok();
+    } else {
+        dotenv::dotenv().ok();
+    }
     pretty_env_logger::init();
 
     if let Err(message) = start().await {
@@ -21,6 +27,32 @@ async fn main() {
         }
         std::process::exit(1);
     }
+}
+
+fn load_env_file(path: &Path) -> Result<(), String> {
+    let contents = fs::read(path).map_err(|error| error.to_string())?;
+    let Some(stripped) = contents.strip_prefix(&[0xef, 0xbb, 0xbf]) else {
+        return dotenv::from_path(path).map_err(|error| error.to_string());
+    };
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let normalized =
+        path.with_file_name(format!(".rustpad-env-{}-{stamp}.tmp", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&normalized)
+        .map_err(|error| error.to_string())?;
+    let write_result = file.write_all(stripped);
+    drop(file);
+    let result = write_result
+        .map_err(|error| error.to_string())
+        .and_then(|_| dotenv::from_path(&normalized).map_err(|error| error.to_string()));
+    fs::remove_file(&normalized).map_err(|error| error.to_string())?;
+    result
 }
 
 fn read_config() -> Result<(u16, u32, Option<String>), String> {
@@ -186,5 +218,30 @@ mod tests {
         assert!(banner.contains("其他设备请使用主机的 IP 地址访问"));
         assert!(banner.contains("未开启持久化，关闭窗口后数据丢失"));
         assert!(!banner.contains("找不到 dist/index.html"));
+    }
+
+    #[test]
+    fn loads_bom_and_crlf_env_with_dotenv_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        let previous = std::env::var_os("SQLITE_URI");
+        std::env::remove_var("SQLITE_URI");
+        fs::write(
+            &path,
+            b"\xef\xbb\xbf# config\r\nSQLITE_URI=sqlite://bom-test.db\r\nRUSTPAD_BOM_TEST=loaded\r\n",
+        )
+        .unwrap();
+        load_env_file(&path).unwrap();
+        assert_eq!(
+            read_config().unwrap().2.as_deref(),
+            Some("sqlite://bom-test.db")
+        );
+        assert_eq!(std::env::var("RUSTPAD_BOM_TEST").unwrap(), "loaded");
+        std::env::remove_var("RUSTPAD_BOM_TEST");
+        if let Some(value) = previous {
+            std::env::set_var("SQLITE_URI", value);
+        } else {
+            std::env::remove_var("SQLITE_URI");
+        }
     }
 }
