@@ -67,6 +67,7 @@ import {
   loadBlockPresentation,
   saveBlockPresentation,
 } from "./blockPresentation";
+import { copyText } from "./copyText";
 import {
   chooseReplacementBlockId,
   loadCurrentBlockId,
@@ -1176,7 +1177,7 @@ function BlockPageView({
 
   async function handleCopyLink() {
     try {
-      await navigator.clipboard.writeText(documentUrl);
+      await copyText(documentUrl);
       toast({
         title: "Copied!",
         description: "Link copied to clipboard",
@@ -1201,7 +1202,7 @@ function BlockPageView({
       const contents = await Promise.all(
         manifest.blocks.map((b) => resolveBlockContent(b.id, b.title)),
       );
-      await navigator.clipboard.writeText(contents.join("\n\n"));
+      await copyText(contents.join("\n\n"));
       toast({
         title: "Copied!",
         description: "All blocks copied to clipboard",
@@ -1226,7 +1227,7 @@ function BlockPageView({
   async function handleCopyBlock(blockId: string, blockTitle: string) {
     try {
       const content = await resolveBlockContent(blockId, blockTitle);
-      await navigator.clipboard.writeText(content);
+      await copyText(content);
       toast({
         title: "Copied!",
         description: `"${blockTitle}" copied to clipboard`,
