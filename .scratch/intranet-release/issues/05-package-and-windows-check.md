@@ -11,7 +11,7 @@ x64 主机上解压后双击运行的 zip。完整背景见同目录 `spec.md` �
       `x86_64-pc-windows-msvc` 的服务端
 - [ ] 脚本在 `release/` 下生成 zip；`release/` 加入 `.gitignore`
 - [ ] zip 内有
-      `rustpad.exe`、`dist\`、`.env`（`SQLITE_URI=sqlite://rustpad.db`、`PORT=3030`、`RUST_LOG=info`）和
+      `rustpad.exe`、`dist\`、`.env`（`SQLITE_URI=sqlite://rustpad.db`、`PORT=3030`、`RUST_LOG=warn`）和
       `使用说明.txt`
 - [ ] `使用说明.txt`
       用中文写，覆盖 spec 列出的全部内容，Windows 记事本能正确显示中文
@@ -20,6 +20,8 @@ x64 主机上解压后双击运行的 zip。完整背景见同目录 `spec.md` �
       `rustpad.exe`：控制台横幅正常，首页能打开，编辑器能加载，`rustpad.db`
       已生成
 - [ ] 停止后再启动，之前写的页面内容还在
+- [ ] 用记事本另存过的 `.env`（CRLF 换行，可能带 BOM）仍能设置
+      `SQLITE_URI`；如果做不到，启动横幅必须给出“未开启持久化”的警告
 - [ ] README 的部署一节补充内网版的说明，或指向打包脚本和使用说明
 - [ ] 报告 zip 和 exe 的大小
 - [ ] 以下项目交给用户验证，验证前标为“未验证”：资源管理器双击启动、防火墙弹窗、真实手机或其他电脑访问、真实断网环境

@@ -76,7 +76,8 @@ Status: ready-for-agent
 
 - `@monaco-editor/react` 的加载器改为使用本地安装的 `monaco-editor`
   包，不再访问任何 CDN。Monaco 的 worker（编辑器后台线程）也由本地构建产物提供。
-- 构建后的 `dist` 里不能出现 `cdn.jsdelivr.net` 或其他外部地址。
+- 打开构建后的页面时，浏览器不能向任何非本机地址发出请求。`@monaco-editor/loader`
+  的默认配置里写死了 jsDelivr 地址，所以构建产物里一定会出现这个字符串；判断标准是实际请求，不是字符串。
 - 删除 `src/Sidebar.tsx` 里的 GitHub 链接。“Read the
   code” 按钮保留，因为它载入的是打包进前端的源码，不联网。
 
@@ -119,7 +120,7 @@ Status: ready-for-agent
   - `rustpad.exe`，即重命名后的 `rustpad-server.exe`；
   - `dist\`；
   - `.env`，写着
-    `SQLITE_URI=sqlite://rustpad.db`、`PORT=3030`、`RUST_LOG=info`；
+    `SQLITE_URI=sqlite://rustpad.db`、`PORT=3030`、`RUST_LOG=warn`；
   - `使用说明.txt`。
 - 数据文件 `rustpad.db`
   在第一次运行时自动生成。从资源管理器双击时，工作目录就是 exe 所在文件夹，所以
@@ -157,8 +158,8 @@ Status: ready-for-agent
   - 输入 id 或完整链接都能打开页面。
 - **服务端**：`cargo test`
   全部通过。局域网 IP 的选取逻辑和横幅文本生成写成可单独测试的函数。
-- **构建产物**：`dist` 里搜索 `cdn.jsdelivr.net` 和
-  `unpkg.com`，应该没有结果。另外用浏览器测试打开构建后的页面，拦截并记录所有发往非本机地址的请求；编辑器加载完成时，记录应该为空。Monaco 的代码里本来就有文档链接之类的 URL 字符串，所以只搜 URL 字符串不能证明不联网，必须看实际请求。
+- **构建产物**：用浏览器测试打开构建后的页面，拦截并记录所有发往非本机地址的请求；编辑器加载完成时，记录应该为空。不用搜索 URL 字符串的办法：`@monaco-editor/loader`
+  的默认配置和 Monaco 的代码里本来就有外部 URL 字符串，搜到了也不代表会联网，搜不到也不能证明不联网。
 - **打包**：在 Windows 的一个临时目录里解压 zip，从 WSL 调用 Windows 启动
   `rustpad.exe`，再从 WSL 访问主机地址，确认首页能打开、编辑器能加载、`rustpad.db`
   已经生成。
@@ -187,7 +188,9 @@ Status: ready-for-agent
 ### 实施顺序
 
 1. `01`（main）：复制降级。完成后合并到 `intranet`。
-2. `02`、`03`、`04`（`intranet`）：本地 Monaco、服务端启动体验、首页与最近页面。三者的文件互不重叠。
+2. `02`、`03`、`04`（`intranet`）：本地 Monaco、服务端启动体验、首页与最近页面。03 只改
+   `rustpad-server`，可以和 02、04 并行；02 和 04 都要往 `package.json` 的
+   `test:browser` 里追加脚本，所以串行执行。
 3. `05`（`intranet`）：打包与 Windows 实机验证，要等 02 到 04 都完成。
 
 ### 已确认的环境事实
@@ -197,5 +200,13 @@ Status: ready-for-agent
 - 这台机器的 WSL 里有 `x86_64-pc-windows-msvc`
   的 rustup 目标，但没有 MSVC 链接器。Windows 侧有
   `C:\Users\Shy\.cargo\bin\cargo.exe`、`stable-x86_64-pc-windows-msvc`
-  工具链和 Visual Studio 2022。
-- 打包脚本依赖这一组合。如果 Windows 侧的工具链被移除，打包就会失败。
+  工具链和 Visual Studio 2022 BuildTools（`VC/Tools/MSVC` 下有 `cl.exe` 和
+  `link.exe`）。从 WSL 调用 `cargo.exe`，在 `/mnt/c/...`
+  目录下编译一个最小程序能成功，运行时能正确输出中文。带 C 代码的依赖（`libsqlite3-sys`）还没有实际编译过，由 05 验证。
+- 构建要在 `/mnt/c/...` 下的目录进行，不要直接在 `\\wsl$` 路径上编译。
+- `@monaco-editor/loader` 的默认配置里写死了
+  `https://cdn.jsdelivr.net/npm/monaco-editor@0.43.0/min/vs`。
+- 现有浏览器测试要求先手动启动 `npm run dev`（`127.0.0.1:5173`）和
+  `PORT=3030 cargo run -p rustpad-server`。
+- 打包脚本依赖 Windows 侧的 `cargo.exe`
+  和 MSVC 工具链。它们被移除后，打包就会失败。
