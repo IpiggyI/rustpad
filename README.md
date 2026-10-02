@@ -87,6 +87,8 @@ following environment variables on startup:
   be retained between server restarts and after their in-memory data structures
   expire. (When deploying a Docker container, this should point to the path of a
   mounted volume.)
+- `IMAGE_DIR`: A directory used to store uploaded images. If provided, image
+  uploads are enabled and images are kept indefinitely.
 - `PORT`: Which local port to listen for HTTP connections on (defaults to 3030).
 - `RUST_LOG`: Directives that control application logging, see the
   [env_logger](https://docs.rs/env_logger/#enabling-logging) docs for more

@@ -1,4 +1,5 @@
-use rustpad_server::{server, database::Database, ServerConfig};
+use rustpad_server::{database::Database, server, ServerConfig};
+use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() {
@@ -23,6 +24,7 @@ async fn main() {
             ),
             Err(_) => None,
         },
+        image_dir: std::env::var_os("IMAGE_DIR").map(PathBuf::from),
     };
 
     warp::serve(server(config)).run(([0, 0, 0, 0], port)).await;

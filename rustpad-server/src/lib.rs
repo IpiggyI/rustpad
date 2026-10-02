@@ -5,13 +5,17 @@
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use std::{io, path::Path};
 
 use dashmap::DashMap;
 use log::{error, info};
 use rand::Rng;
 use serde::Serialize;
 use tokio::time::{self, Instant};
-use warp::{filters::BoxedFilter, ws::Ws, Filter, Rejection, Reply};
+use tokio::{fs, io::AsyncWriteExt};
+use warp::{
+    filters::BoxedFilter, http::StatusCode, hyper::body::Bytes, ws::Ws, Filter, Rejection, Reply,
+};
 
 use crate::{database::Database, rustpad::Rustpad};
 
@@ -57,6 +61,8 @@ struct ServerState {
     documents: Arc<DashMap<String, Document>>,
     /// Connection to the database pool, if persistence is enabled.
     database: Option<Database>,
+    /// Directory for uploaded images, if uploads are enabled.
+    image_dir: Option<std::path::PathBuf>,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -77,6 +83,8 @@ pub struct ServerConfig {
     pub expiry_days: u32,
     /// Database object, for persistence if desired.
     pub database: Option<Database>,
+    /// Directory for uploaded images, if uploads are enabled.
+    pub image_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for ServerConfig {
@@ -84,6 +92,7 @@ impl Default for ServerConfig {
         Self {
             expiry_days: 1,
             database: None,
+            image_dir: None,
         }
     }
 }
@@ -106,10 +115,11 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
     let state = ServerState {
         documents: Default::default(),
         database: config.database,
+        image_dir: config.image_dir,
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
 
-    let state_filter = warp::any().map(move || state.clone());
+    let state_filter = warp::any().map(move || state.clone()).boxed();
 
     let socket = warp::path!("socket" / String)
         .and(warp::ws())
@@ -126,10 +136,341 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
         .as_secs();
     let stats = warp::path!("stats")
         .and(warp::any().map(move || start_time))
-        .and(state_filter)
+        .and(state_filter.clone())
         .and_then(stats_handler);
 
-    socket.or(text).or(stats).boxed()
+    let images = image_routes(state_filter.clone());
+
+    socket.or(text).or(stats).or(images).boxed()
+}
+
+const MAX_IMAGE_SIZE: u64 = 10 * 1024 * 1024;
+const IMAGE_ID_LENGTH: usize = 32;
+const IMAGE_NAME_ATTEMPTS: usize = 32;
+
+#[derive(Debug)]
+enum ImageFailure {
+    Disabled,
+    MissingContentLength,
+    TooLarge,
+    UnsupportedFormat,
+    NotFound,
+    Storage,
+}
+
+#[derive(Debug)]
+struct ImageReject(ImageFailure);
+
+impl warp::reject::Reject for ImageReject {}
+
+#[derive(Serialize)]
+struct ImagePath {
+    path: String,
+}
+
+fn image_routes(state_filter: BoxedFilter<(ServerState,)>) -> BoxedFilter<(impl Reply,)> {
+    let get = warp::path::tail()
+        .and(warp::get())
+        .and(state_filter.clone())
+        .and_then(get_image_handler);
+
+    let upload = warp::path::tail()
+        .and(warp::post())
+        .and(warp::header::optional::<u64>("content-length"))
+        .and(state_filter)
+        .and_then(check_upload)
+        .and(warp::body::bytes())
+        .and_then(upload_image_handler);
+
+    warp::path("images")
+        .and(get.or(upload).recover(image_rejection))
+        .boxed()
+}
+
+async fn check_upload(
+    tail: warp::path::Tail,
+    content_length: Option<u64>,
+    state: ServerState,
+) -> Result<std::path::PathBuf, Rejection> {
+    if !tail.as_str().is_empty() {
+        return Err(warp::reject::custom(ImageReject(ImageFailure::NotFound)));
+    }
+    let directory = state
+        .image_dir
+        .ok_or_else(|| warp::reject::custom(ImageReject(ImageFailure::Disabled)))?;
+    let content_length = content_length
+        .ok_or_else(|| warp::reject::custom(ImageReject(ImageFailure::MissingContentLength)))?;
+    if content_length > MAX_IMAGE_SIZE {
+        return Err(warp::reject::custom(ImageReject(ImageFailure::TooLarge)));
+    }
+    Ok(directory)
+}
+
+async fn upload_image_handler(
+    directory: std::path::PathBuf,
+    body: Bytes,
+) -> Result<impl Reply, Rejection> {
+    if body.len() as u64 > MAX_IMAGE_SIZE {
+        return Err(warp::reject::custom(ImageReject(ImageFailure::TooLarge)));
+    }
+    let Some(extension) = image_extension(&body) else {
+        return Err(warp::reject::custom(ImageReject(
+            ImageFailure::UnsupportedFormat,
+        )));
+    };
+    let path = match store_image(&directory, extension, &body).await {
+        Ok(path) => path,
+        Err(err) => {
+            error!("failed to store uploaded image: {}", err);
+            return Err(warp::reject::custom(ImageReject(ImageFailure::Storage)));
+        }
+    };
+    Ok(warp::reply::json(&ImagePath { path }))
+}
+
+async fn get_image_handler(
+    tail: warp::path::Tail,
+    state: ServerState,
+) -> Result<impl Reply, Rejection> {
+    let Some((id, extension)) = parse_image_name(tail.as_str()) else {
+        return Err(warp::reject::custom(ImageReject(ImageFailure::NotFound)));
+    };
+    let Some(directory) = state.image_dir else {
+        return Err(warp::reject::custom(ImageReject(ImageFailure::NotFound)));
+    };
+    let bytes = match fs::read(directory.join(format!("{}.{}", id, extension))).await {
+        Ok(bytes) => bytes,
+        Err(_) => return Err(warp::reject::custom(ImageReject(ImageFailure::NotFound))),
+    };
+
+    let mut response = warp::reply::Response::new(warp::hyper::Body::from(bytes));
+    let content_type = match extension {
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => unreachable!(),
+    };
+    response.headers_mut().insert(
+        warp::http::header::CONTENT_TYPE,
+        content_type.parse().expect("valid image content type"),
+    );
+    response.headers_mut().insert(
+        "x-content-type-options",
+        "nosniff".parse().expect("valid header value"),
+    );
+    response.headers_mut().insert(
+        "cache-control",
+        "public, max-age=31536000, immutable"
+            .parse()
+            .expect("valid header value"),
+    );
+    Ok(response)
+}
+
+async fn image_rejection(rejection: Rejection) -> Result<impl Reply, Rejection> {
+    let (status, message) = match rejection.find::<ImageReject>() {
+        Some(ImageReject(ImageFailure::Disabled)) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Image uploads are disabled.",
+        ),
+        Some(ImageReject(ImageFailure::MissingContentLength)) => {
+            (StatusCode::LENGTH_REQUIRED, "Content-Length is required.")
+        }
+        Some(ImageReject(ImageFailure::TooLarge)) => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Image exceeds the 10 MiB size limit.",
+        ),
+        Some(ImageReject(ImageFailure::UnsupportedFormat)) => (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Unsupported image format.",
+        ),
+        Some(ImageReject(ImageFailure::NotFound)) => (StatusCode::NOT_FOUND, "Image not found."),
+        Some(ImageReject(ImageFailure::Storage)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to store image.")
+        }
+        None if rejection.is_not_found()
+            || rejection.find::<warp::reject::MethodNotAllowed>().is_some() =>
+        {
+            (StatusCode::NOT_FOUND, "Image not found.")
+        }
+        None => {
+            error!("image request failed: {:?}", rejection);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to process image request.",
+            )
+        }
+    };
+    Ok(warp::reply::with_status(message, status))
+}
+
+fn image_extension(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
+fn parse_image_name(name: &str) -> Option<(&str, &str)> {
+    let (id, extension) = name.split_once('.')?;
+    if id.is_empty()
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        || !matches!(extension, "png" | "jpg" | "gif" | "webp")
+    {
+        return None;
+    }
+    Some((id, extension))
+}
+
+fn random_image_id() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..IMAGE_ID_LENGTH)
+        .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+        .collect()
+}
+
+// shortcut: retain images indefinitely to avoid deleting referenced files; ceiling: disk use grows without bound; replace when: image cleanup by reference becomes a requirement.
+async fn store_image(directory: &Path, extension: &str, bytes: &[u8]) -> io::Result<String> {
+    fs::create_dir_all(directory).await?;
+
+    let mut temporary_file = None;
+    for _ in 0..IMAGE_NAME_ATTEMPTS {
+        let path = directory.join(format!(".{}.tmp", random_image_id()));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await
+        {
+            Ok(file) => {
+                temporary_file = Some((path, file));
+                break;
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    let Some((temporary_path, mut temporary_file)) = temporary_file else {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not allocate a unique temporary image file after repeated collisions",
+        ));
+    };
+
+    if let Err(err) = temporary_file.write_all(bytes).await {
+        drop(temporary_file);
+        remove_temporary_file(&temporary_path).await;
+        return Err(err);
+    }
+    if let Err(err) = temporary_file.flush().await {
+        drop(temporary_file);
+        remove_temporary_file(&temporary_path).await;
+        return Err(err);
+    }
+    drop(temporary_file);
+
+    let result = publish_image_with(directory, &temporary_path, extension, random_image_id).await;
+    remove_temporary_file(&temporary_path).await;
+    result
+}
+
+async fn publish_image_with(
+    directory: &Path,
+    temporary_path: &Path,
+    extension: &str,
+    mut next_id: impl FnMut() -> String,
+) -> io::Result<String> {
+    for _ in 0..IMAGE_NAME_ATTEMPTS {
+        let id = next_id();
+        let final_path = directory.join(format!("{}.{}", id, extension));
+        // A hard link publishes the completed file without replacing an existing name.
+        match fs::hard_link(temporary_path, &final_path).await {
+            Ok(()) => return Ok(format!("api/images/{}.{}", id, extension)),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a unique image name after repeated collisions",
+    ))
+}
+
+async fn remove_temporary_file(path: &Path) {
+    if let Err(err) = fs::remove_file(path).await {
+        if err.kind() != io::ErrorKind::NotFound {
+            error!("failed to remove temporary image file {:?}: {}", path, err);
+        }
+    }
+}
+
+#[cfg(test)]
+mod image_store_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn publishing_retries_collisions_without_overwriting_existing_images() {
+        let directory = tempfile::tempdir().unwrap();
+        let temporary_path = directory.path().join("upload.tmp");
+        let existing_path = directory.path().join("existing.png");
+        let new_path = directory.path().join("new.png");
+        fs::write(&temporary_path, b"complete image bytes")
+            .await
+            .unwrap();
+        fs::write(&existing_path, b"existing image bytes")
+            .await
+            .unwrap();
+        let mut ids = ["existing", "new"].into_iter();
+
+        let published = publish_image_with(directory.path(), &temporary_path, "png", || {
+            ids.next().unwrap().to_owned()
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(published, "api/images/new.png");
+        assert_eq!(
+            fs::read(&existing_path).await.unwrap(),
+            b"existing image bytes"
+        );
+        assert_eq!(fs::read(&new_path).await.unwrap(), b"complete image bytes");
+    }
+
+    #[tokio::test]
+    async fn repeated_collisions_fail_without_overwriting_existing_images() {
+        let directory = tempfile::tempdir().unwrap();
+        let temporary_path = directory.path().join("upload.tmp");
+        let existing_path = directory.path().join("existing.png");
+        fs::write(&temporary_path, b"new image bytes")
+            .await
+            .unwrap();
+        fs::write(&existing_path, b"existing image bytes")
+            .await
+            .unwrap();
+
+        let error = publish_image_with(directory.path(), &temporary_path, "png", || {
+            "existing".to_owned()
+        })
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read(&existing_path).await.unwrap(),
+            b"existing image bytes"
+        );
+    }
 }
 
 /// Handler for the `/api/socket/{id}` endpoint.
