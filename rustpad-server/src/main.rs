@@ -88,10 +88,11 @@ async fn start() -> Result<(), String> {
         None => None,
     };
 
+    let image_dir = std::env::var_os("IMAGE_DIR").map(PathBuf::from);
     let config = ServerConfig {
         expiry_days,
         database,
-        image_dir: std::env::var_os("IMAGE_DIR").map(PathBuf::from),
+        image_dir: image_dir.clone(),
     };
     let (bound_address, serve) = warp::serve(server(config))
         .try_bind_ephemeral(([0, 0, 0, 0], port))
@@ -107,6 +108,7 @@ async fn start() -> Result<(), String> {
             bound_address.port(),
             ip,
             sqlite_uri.as_deref(),
+            image_dir.as_deref(),
             &working_dir
         )
     );
@@ -145,6 +147,7 @@ fn startup_banner(
     port: u16,
     ip: Option<Ipv4Addr>,
     sqlite_uri: Option<&str>,
+    image_dir: Option<&Path>,
     working_dir: &Path,
 ) -> String {
     let mut lines = vec![format!(
@@ -157,6 +160,10 @@ fn startup_banner(
     match sqlite_uri {
         Some(uri) => lines.push(format!("数据位置（SQLITE_URI）：{uri}")),
         None => lines.push("警告：未开启持久化，关闭窗口后数据丢失。".into()),
+    }
+    match image_dir {
+        Some(path) => lines.push(format!("图片位置（IMAGE_DIR）：{}", path.display())),
+        None => lines.push("图片上传未开启：未设置 IMAGE_DIR。".into()),
     }
     if !working_dir.join("dist/index.html").is_file() {
         lines.push(format!(
@@ -205,6 +212,7 @@ mod tests {
             3030,
             Some(Ipv4Addr::new(192, 168, 1, 42)),
             Some("sqlite://rustpad.db"),
+            None,
             dir.path(),
         );
         assert!(banner.contains("http://192.168.1.42:3030/"));
@@ -218,11 +226,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("dist")).unwrap();
         std::fs::write(dir.path().join("dist/index.html"), "").unwrap();
-        let banner = startup_banner(3030, None, None, dir.path());
+        let banner = startup_banner(3030, None, None, None, dir.path());
         assert!(banner.contains("http://localhost:3030/"));
         assert!(banner.contains("其他设备请使用主机的 IP 地址访问"));
         assert!(banner.contains("未开启持久化，关闭窗口后数据丢失"));
         assert!(!banner.contains("找不到 dist/index.html"));
+    }
+
+    #[test]
+    fn banner_shows_configured_image_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let banner = startup_banner(3030, None, None, Some(Path::new("images")), dir.path());
+        assert!(banner.contains("图片位置（IMAGE_DIR）：images"));
+        assert!(!banner.contains("图片上传未开启"));
+    }
+
+    #[test]
+    fn banner_shows_image_uploads_disabled_without_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let banner = startup_banner(3030, None, None, None, dir.path());
+        assert!(banner.contains("图片上传未开启：未设置 IMAGE_DIR。"));
+        assert!(!banner.contains("图片位置（IMAGE_DIR）"));
     }
 
     #[test]

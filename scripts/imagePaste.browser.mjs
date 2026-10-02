@@ -73,14 +73,14 @@ async function open(context, url, blocks) {
     const button = document.querySelector('button[aria-label="Upload image"]');
     return button && !button.disabled;
   });
-  assert.match(
+  assert.deepEqual(
     await page.evaluate(() =>
       performance
         .getEntriesByType("resource")
         .map((entry) => entry.name)
-        .find((name) => name.includes("/min/vs/editor/editor.main.js")),
+        .filter((name) => new URL(name).host !== location.host),
     ),
-    /monaco-editor@0\.52\.2\//,
+    [],
   );
   await page.evaluate(() => {
     window.ed = window.monaco.editor.getEditors()[0];

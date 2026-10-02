@@ -66,6 +66,15 @@ for name in ("rustpad.exe", "dist/index.html", ".env", "使用说明.txt"):
     assert (directory / name).is_file(), name
 PY
 
+step="检查压缩包图片配置"
+python3 - "$archive" <<'PY'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as source:
+    assert "IMAGE_DIR=images" in source.read(".env").decode("utf-8-sig").splitlines()
+PY
+
 start_server() {
   local attempt=$1
   local exe_win out_win err_win pid_win
@@ -104,7 +113,9 @@ check_banner() {
   local log="$workdir/rustpad-$attempt.stdout.log"
   grep -q '访问地址：http://' "$log"
   grep -q '数据位置（SQLITE_URI）：sqlite://rustpad.db' "$log"
+  grep -q '图片位置（IMAGE_DIR）：images' "$log"
   ! grep -q '未开启持久化' "$log"
+  ! grep -q '图片上传未开启' "$log"
   ! grep -q '找不到 dist/index.html' "$log"
 }
 
@@ -126,8 +137,57 @@ stop_server() {
   return 1
 }
 
+check_image() {
+  local attempt=$1
+  step="检查图片读回字节和类型（第 $attempt 次）"
+  python3 - "$workdir" <<'PY'
+import pathlib
+import sys
+import urllib.request
+
+directory = pathlib.Path(sys.argv[1])
+path = (directory / "uploaded-image.path").read_text(encoding="utf-8")
+with urllib.request.urlopen(f"http://127.0.0.1:3030/{path}", timeout=5) as response:
+    assert response.status == 200, response.status
+    assert response.headers["Content-Type"] == "image/png", response.headers
+    assert response.read() == (directory / "upload.png").read_bytes()
+PY
+}
+
 start_server 1
 check_banner 1
+
+step="上传 PNG 图片"
+python3 - "$workdir" <<'PY'
+import json
+import pathlib
+import re
+import struct
+import sys
+import urllib.request
+import zlib
+
+directory = pathlib.Path(sys.argv[1])
+def chunk(kind, data):
+    return struct.pack("!I", len(data)) + kind + data + struct.pack("!I", zlib.crc32(kind + data))
+png = (b"\x89PNG\r\n\x1a\n"
+       + chunk(b"IHDR", struct.pack("!2I5B", 1, 1, 8, 6, 0, 0, 0))
+       + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00\xff"))
+       + chunk(b"IEND", b""))
+(directory / "upload.png").write_bytes(png)
+request = urllib.request.Request("http://127.0.0.1:3030/api/images", data=png, method="POST")
+with urllib.request.urlopen(request, timeout=5) as response:
+    assert response.status == 200, response.status
+    path = json.load(response)["path"]
+assert re.fullmatch(r"api/images/[a-z0-9]+\.png", path), path
+(directory / "uploaded-image.path").write_text(path, encoding="utf-8")
+PY
+check_image 1
+
+step="检查图片保存在程序旁的 images 文件夹"
+image_path=$(<"$workdir/uploaded-image.path")
+[[ -f "$workdir/images/${image_path##*/}" ]]
+cmp "$workdir/upload.png" "$workdir/images/${image_path##*/}"
 
 step="检查前端资源不访问外部地址"
 (cd "$root" && RUSTPAD_DIST_URL=http://127.0.0.1:3030 node scripts/offlineAssets.browser.mjs)
@@ -167,6 +227,7 @@ JS
 stop_server
 start_server 2
 check_banner 2
+check_image 2
 step="检查重启后的文档和数据库"
 python3 - "$doc_id" "$marker" "$workdir/rustpad.db" <<'PY'
 import pathlib
@@ -194,4 +255,4 @@ check_banner 3
 step="检查 BOM 配置仍开启持久化"
 [[ -f "$workdir/rustpad.db" ]]
 stop_server
-printf '发布检查通过：Windows 启动、离线资源、持久化重启和 BOM 配置。\n'
+printf '发布检查通过：Windows 启动、离线资源、持久化重启、图片上传与重启后读取和 BOM 配置。\n'
