@@ -34,4 +34,5 @@
 `api/images/<8 位数字>-<4 位小写字母或数字>.png`，由同一会话完成。合并后的 `cargo test -p rustpad-server`、`npm run check`、`npm test`（258 项）通过。
 `scripts/package-intranet.sh` 生成 `release/rustpad-intranet-windows-x64-20261003-df5b5b6.zip`。对该包运行
 `scripts/check-intranet-release.sh` 时，脚本文件在运行中途被本次改动以外的未提交修改改写，输出里出现了新版脚本才有的清理信息，所以这次的退出码 0
-不能作为该包的验证结果，发布检查待重跑。在本分支代码上 `imagePaste.browser.mjs` 和 `imagePreview.browser.mjs` 共 34 项通过，没有失败项。
+不能作为该包的验证结果。随后用当时工作区里的脚本重跑（含那些未提交的临时目录清理改动），运行前后脚本的
+SHA-256 一致，退出码 0，上传的 PNG 按新格式命名。在本分支代码上 `imagePaste.browser.mjs` 和 `imagePreview.browser.mjs` 共 34 项通过，没有失败项。
