@@ -6,15 +6,26 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] 打包用的 `.env` 写入 `IMAGE_DIR=images`，带一行中文注释，风格与其他三项一致
-- [ ] 启动横幅显示图片位置（`IMAGE_DIR`）；未设置时提示图片上传未开启，风格与"数据位置（SQLITE_URI）"一行一致
-- [ ] `使用说明.txt` 的备份和恢复说明同时包括 `rustpad.db` 和 `images` 文件夹；如写到添加图片的方法，按钮名与界面一致
-- [ ] `imagePaste.browser.mjs`、`imagePreview.browser.mjs` 中断言 Monaco 来自 CDN 的检查，改成本分支其他浏览器测试的"不访问外部地址"检查
-- [ ] 发布检查脚本：确认 zip 里的 `.env` 含 `IMAGE_DIR=images`；横幅含图片位置；在 Windows 服务端上传一张 png 并读回相同字节；重启后仍能读回；`images` 文件夹位于程序所在文件夹
-- [ ] `cargo test`、类型检查、前端单元测试通过
-- [ ] 打包并在 Windows 主机上跑通发布检查
+- [x] 打包用的 `.env` 写入 `IMAGE_DIR=images`，带一行中文注释，风格与其他三项一致
+- [x] 启动横幅显示图片位置（`IMAGE_DIR`）；未设置时提示图片上传未开启，风格与"数据位置（SQLITE_URI）"一行一致
+- [x] `使用说明.txt` 的备份和恢复说明同时包括 `rustpad.db` 和 `images` 文件夹；如写到添加图片的方法，按钮名与界面一致
+- [x] `imagePaste.browser.mjs`、`imagePreview.browser.mjs` 中断言 Monaco 来自 CDN 的检查，改成本分支其他浏览器测试的"不访问外部地址"检查
+- [x] 发布检查脚本：确认 zip 里的 `.env` 含 `IMAGE_DIR=images`；横幅含图片位置；在 Windows 服务端上传一张 png 并读回相同字节；重启后仍能读回；`images` 文件夹位于程序所在文件夹
+- [x] `cargo test`、类型检查、前端单元测试通过
+- [x] 打包并在 Windows 主机上跑通发布检查
 - [ ] 实机验证：主机和手机上粘贴、选图、预览、点击打开原图
 
 ## Comments
+
+实现由 Codex 车道 `gpt-6.1-sol` 完成（会话 `01a0fd96-4744-7451-be49-7ee2714fdb84`），提交 `1f40e20`。
+
+验证：`cargo test -p rustpad-server`、`npm run check`、`npm test`（252 项）通过。`scripts/package-intranet.sh` 生成
+`release/rustpad-intranet-windows-x64-20261003-1f40e20.zip`；`scripts/check-intranet-release.sh`
+对该包退出码 0，在 Windows 主机上完成上传 PNG、读回相同字节、确认文件落在 `images` 文件夹、重启后再读回，NTFS 上的硬链接发布可用。在本分支代码上
+`imagePaste.browser.mjs` 10 项、`imagePreview.browser.mjs` 18 项通过。
+
+发布检查会在 Windows 主机上启动 `rustpad.exe` 三次，每次都会自动打开浏览器。
+
+实机验证留给人工：主机和手机上的粘贴、选图、预览、点击打开原图。
