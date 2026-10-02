@@ -179,7 +179,7 @@ request = urllib.request.Request("http://127.0.0.1:3030/api/images", data=png, m
 with urllib.request.urlopen(request, timeout=5) as response:
     assert response.status == 200, response.status
     path = json.load(response)["path"]
-assert re.fullmatch(r"api/images/[a-z0-9]+\.png", path), path
+assert re.fullmatch(r"api/images/[0-9]{8}-[a-z0-9]{4}\.png", path), path
 (directory / "uploaded-image.path").write_text(path, encoding="utf-8")
 PY
 check_image 1
