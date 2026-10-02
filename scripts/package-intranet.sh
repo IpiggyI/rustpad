@@ -28,6 +28,20 @@ windows_temp=$( (cd "$cmd_dir" && cmd.exe /C 'echo %TEMP%') | tr -d '\r' | tail 
 [[ -n "$windows_temp" && "$windows_temp" != '%TEMP%' ]]
 temp_dir=$(wslpath -u "$windows_temp")
 build_dir="$temp_dir/rustpad-intranet-build"
+build_lock="$temp_dir/rustpad-intranet-build.lock"
+if ! (set -o noclobber; : > "$build_lock") 2>/dev/null; then
+  printf '打包失败：Windows 编译缓存正在使用，或上次中断留下锁文件：%s\n' "$build_lock" >&2
+  exit 1
+fi
+release_build_lock() {
+  local status=$?
+  if ! rm -- "$build_lock"; then
+    printf '无法释放编译缓存锁：%s\n' "$build_lock" >&2
+    [[ "$status" -ne 0 ]] || status=1
+  fi
+  exit "$status"
+}
+trap release_build_lock EXIT
 mkdir -p "$build_dir"
 
 step="查找 Windows cargo.exe"

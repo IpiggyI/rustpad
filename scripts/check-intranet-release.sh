@@ -6,9 +6,12 @@ step="检查参数"
 workdir=""
 current_pid=""
 launcher_pid=""
+checks_passed=false
 trap 'status=$?; printf "发布检查失败：%s（退出码 %s）。\n" "$step" "$status" >&2' ERR
 
 cleanup() {
+  local status=$?
+  trap - EXIT ERR
   if [[ -n "$current_pid" ]]; then
     taskkill.exe /F /PID "$current_pid" >/dev/null 2>&1 || true
   fi
@@ -22,6 +25,20 @@ cleanup() {
     kill "$launcher_pid" 2>/dev/null || true
     wait "$launcher_pid" 2>/dev/null || true
   fi
+  if [[ -n "$workdir" ]]; then
+    local cleanup_script cleanup_dir
+    cleanup_script=$(wslpath -w "$root/scripts/cleanup-intranet.ps1")
+    cleanup_dir=$(wslpath -w "$workdir")
+    if ! powershell.exe -NoProfile -NonInteractive -File "$cleanup_script" \
+      -CheckDirectory "$cleanup_dir" -TempRoot "$windows_temp"; then
+      printf '临时目录清理失败，已保留：%s\n' "$workdir" >&2
+      [[ "$status" -ne 0 ]] || status=1
+    fi
+  fi
+  if [[ "$status" -eq 0 && "$checks_passed" == true ]]; then
+    printf '发布检查通过：Windows 启动、离线资源、持久化重启、图片上传与重启后读取和 BOM 配置。\n'
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -255,4 +272,4 @@ check_banner 3
 step="检查 BOM 配置仍开启持久化"
 [[ -f "$workdir/rustpad.db" ]]
 stop_server
-printf '发布检查通过：Windows 启动、离线资源、持久化重启、图片上传与重启后读取和 BOM 配置。\n'
+checks_passed=true

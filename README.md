@@ -118,6 +118,15 @@ We deploy a public instance of this image using [Fly.io](https://fly.io/).
 On the `intranet` branch, run `bash scripts/package-intranet.sh` from WSL to
 build a Windows x64 zip. Check the zip on the Windows host with
 `bash scripts/check-intranet-release.sh release/<zip-name>.zip`.
+The release check removes its own temporary directory on success or failure after
+stopping its test processes. It refuses cleanup if an executable remains active.
+Packaging reuses `%TEMP%\rustpad-intranet-build` as a Windows compilation cache.
+To reclaim that cache while no Windows compilation is running, execute
+`powershell.exe -NoProfile -File "$(wslpath -w scripts/cleanup-intranet.ps1)" -BuildCache`
+from WSL. Release archives and application data are retained.
+Packaging and cache cleanup share an exclusive `rustpad-intranet-build.lock`
+file. If a forced termination leaves that lock behind, first confirm the
+packaging process has exited, then remove the lock file before retrying.
 
 ## In the media
 
