@@ -31,4 +31,5 @@ document 的捕获阶段，只处理事件路径里包含预览链接的事件�
 回归：其余浏览器脚本逐个运行，`foldMemory`、`compactHeights`、`currentBlock`、`singleBlock`、`rustpadClose`、`sidebarBlocks`、`deleteBlock`、`integrated`、`clipboardFallback`
 直接通过；`reorderBlocks` 一次超时，重跑两次都通过。`headingEnter`
 在这一轮没有完整通过，每次失败的断言不同（`multi-cursor` 的单文档或分块模式、普通行折叠箭头写入记录）。把两个编辑器文件还原到 02
-之前的版本（`26d4ef9`，不含任何图片代码）后，它照样失败，所以这不是图片功能造成的回退，而是一个依赖时序的不稳定测试。
+之前的版本（`26d4ef9`，不含任何图片代码）后，它照样失败。随后重启后端和 vite，在 `b8f2323` 上连跑两次：第一次失败在
+`multi-cursor`，第二次 43 项全部通过。所以这不是图片功能造成的回退。失败原因推断为依赖时序，没有证实。
