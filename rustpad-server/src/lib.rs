@@ -145,7 +145,8 @@ fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
 }
 
 const MAX_IMAGE_SIZE: u64 = 10 * 1024 * 1024;
-const IMAGE_ID_LENGTH: usize = 32;
+const IMAGE_TEMP_ID_LENGTH: usize = 32;
+const IMAGE_SUFFIX_LENGTH: usize = 4;
 const IMAGE_NAME_ATTEMPTS: usize = 32;
 
 #[derive(Debug)]
@@ -168,14 +169,21 @@ struct ImagePath {
     path: String,
 }
 
+struct ImageUploadTarget {
+    directory: std::path::PathBuf,
+    date: String,
+}
+
 fn image_routes(state_filter: BoxedFilter<(ServerState,)>) -> BoxedFilter<(impl Reply,)> {
     let get = warp::path::tail()
         .and(warp::get())
         .and(state_filter.clone())
         .and_then(get_image_handler);
 
+    let query = warp::query::raw().or(warp::any().map(String::new)).unify();
     let upload = warp::path::tail()
         .and(warp::post())
+        .and(query)
         .and(warp::header::optional::<u64>("content-length"))
         .and(state_filter)
         .and_then(check_upload)
@@ -189,9 +197,10 @@ fn image_routes(state_filter: BoxedFilter<(ServerState,)>) -> BoxedFilter<(impl 
 
 async fn check_upload(
     tail: warp::path::Tail,
+    query: String,
     content_length: Option<u64>,
     state: ServerState,
-) -> Result<std::path::PathBuf, Rejection> {
+) -> Result<ImageUploadTarget, Rejection> {
     if !tail.as_str().is_empty() {
         return Err(warp::reject::custom(ImageReject(ImageFailure::NotFound)));
     }
@@ -203,11 +212,14 @@ async fn check_upload(
     if content_length > MAX_IMAGE_SIZE {
         return Err(warp::reject::custom(ImageReject(ImageFailure::TooLarge)));
     }
-    Ok(directory)
+    Ok(ImageUploadTarget {
+        directory,
+        date: image_date_from_query(&query, SystemTime::now()),
+    })
 }
 
 async fn upload_image_handler(
-    directory: std::path::PathBuf,
+    target: ImageUploadTarget,
     body: Bytes,
 ) -> Result<impl Reply, Rejection> {
     if body.len() as u64 > MAX_IMAGE_SIZE {
@@ -218,7 +230,7 @@ async fn upload_image_handler(
             ImageFailure::UnsupportedFormat,
         )));
     };
-    let path = match store_image(&directory, extension, &body).await {
+    let path = match store_image(&target.directory, extension, &body, &target.date).await {
         Ok(path) => path,
         Err(err) => {
             error!("failed to store uploaded image: {}", err);
@@ -321,32 +333,115 @@ fn image_extension(bytes: &[u8]) -> Option<&'static str> {
 
 fn parse_image_name(name: &str) -> Option<(&str, &str)> {
     let (id, extension) = name.split_once('.')?;
-    if id.is_empty()
-        || !id
+    let legacy_id = !id.is_empty()
+        && id
             .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-        || !matches!(extension, "png" | "jpg" | "gif" | "webp")
-    {
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit());
+    let dated_id = id.split_once('-').is_some_and(|(date, suffix)| {
+        date.len() == 8
+            && date.bytes().all(|byte| byte.is_ascii_digit())
+            && suffix.len() == IMAGE_SUFFIX_LENGTH
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    });
+    if (!legacy_id && !dated_id) || !matches!(extension, "png" | "jpg" | "gif" | "webp") {
         return None;
     }
     Some((id, extension))
 }
 
-fn random_image_id() -> String {
+fn image_date_from_query(query: &str, now: SystemTime) -> String {
+    let mut requested_date = None;
+    for parameter in query.split('&') {
+        let Some((key, value)) = parameter.split_once('=') else {
+            continue;
+        };
+        if key == "date" {
+            if requested_date.is_some() {
+                return utc_date_at(now);
+            }
+            requested_date = Some(value);
+        }
+    }
+    requested_date
+        .filter(|date| is_valid_image_date(date))
+        .map(str::to_owned)
+        .unwrap_or_else(|| utc_date_at(now))
+}
+
+fn is_valid_image_date(date: &str) -> bool {
+    let bytes = date.as_bytes();
+    if bytes.len() != 8 || !bytes.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let year = date[..4].parse::<u32>().unwrap();
+    let month = date[4..6].parse::<u32>().unwrap();
+    let day = date[6..8].parse::<u32>().unwrap();
+    if year == 0 {
+        return false;
+    }
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days_in_month).contains(&day)
+}
+
+fn utc_date_at(time: SystemTime) -> String {
+    let days = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("SystemTime returned before UNIX_EPOCH")
+        .as_secs()
+        / 86_400;
+    let days = i64::try_from(days).expect("UTC date is outside the supported year range");
+
+    // Convert Unix days to a Gregorian date without relying on the host timezone.
+    let shifted_days = days + 719_468;
+    let era = shifted_days / 146_097;
+    let day_of_era = shifted_days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    format!("{year:04}{month:02}{day:02}")
+}
+
+fn random_temporary_image_id() -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::thread_rng();
-    (0..IMAGE_ID_LENGTH)
+    (0..IMAGE_TEMP_ID_LENGTH)
+        .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+        .collect()
+}
+
+fn random_image_suffix() -> String {
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+    (0..IMAGE_SUFFIX_LENGTH)
         .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
         .collect()
 }
 
 // shortcut: retain images indefinitely to avoid deleting referenced files; ceiling: disk use grows without bound; replace when: image cleanup by reference becomes a requirement.
-async fn store_image(directory: &Path, extension: &str, bytes: &[u8]) -> io::Result<String> {
+async fn store_image(
+    directory: &Path,
+    extension: &str,
+    bytes: &[u8],
+    date: &str,
+) -> io::Result<String> {
     fs::create_dir_all(directory).await?;
 
     let mut temporary_file = None;
     for _ in 0..IMAGE_NAME_ATTEMPTS {
-        let path = directory.join(format!(".{}.tmp", random_image_id()));
+        let path = directory.join(format!(".{}.tmp", random_temporary_image_id()));
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -380,7 +475,14 @@ async fn store_image(directory: &Path, extension: &str, bytes: &[u8]) -> io::Res
     }
     drop(temporary_file);
 
-    let result = publish_image_with(directory, &temporary_path, extension, random_image_id).await;
+    let result = publish_image_with(
+        directory,
+        &temporary_path,
+        extension,
+        date,
+        random_image_suffix,
+    )
+    .await;
     remove_temporary_file(&temporary_path).await;
     result
 }
@@ -389,10 +491,11 @@ async fn publish_image_with(
     directory: &Path,
     temporary_path: &Path,
     extension: &str,
-    mut next_id: impl FnMut() -> String,
+    date: &str,
+    mut next_suffix: impl FnMut() -> String,
 ) -> io::Result<String> {
     for _ in 0..IMAGE_NAME_ATTEMPTS {
-        let id = next_id();
+        let id = format!("{}-{}", date, next_suffix());
         let final_path = directory.join(format!("{}.{}", id, extension));
         // A hard link publishes the completed file without replacing an existing name.
         match fs::hard_link(temporary_path, &final_path).await {
@@ -423,23 +526,24 @@ mod image_store_tests {
     async fn publishing_retries_collisions_without_overwriting_existing_images() {
         let directory = tempfile::tempdir().unwrap();
         let temporary_path = directory.path().join("upload.tmp");
-        let existing_path = directory.path().join("existing.png");
-        let new_path = directory.path().join("new.png");
+        let existing_path = directory.path().join("20261003-ab12.png");
+        let new_path = directory.path().join("20261003-cd34.png");
         fs::write(&temporary_path, b"complete image bytes")
             .await
             .unwrap();
         fs::write(&existing_path, b"existing image bytes")
             .await
             .unwrap();
-        let mut ids = ["existing", "new"].into_iter();
+        let mut suffixes = ["ab12", "cd34"].into_iter();
 
-        let published = publish_image_with(directory.path(), &temporary_path, "png", || {
-            ids.next().unwrap().to_owned()
-        })
-        .await
-        .unwrap();
+        let published =
+            publish_image_with(directory.path(), &temporary_path, "png", "20261003", || {
+                suffixes.next().unwrap().to_owned()
+            })
+            .await
+            .unwrap();
 
-        assert_eq!(published, "api/images/new.png");
+        assert_eq!(published, "api/images/20261003-cd34.png");
         assert_eq!(
             fs::read(&existing_path).await.unwrap(),
             b"existing image bytes"
@@ -451,7 +555,7 @@ mod image_store_tests {
     async fn repeated_collisions_fail_without_overwriting_existing_images() {
         let directory = tempfile::tempdir().unwrap();
         let temporary_path = directory.path().join("upload.tmp");
-        let existing_path = directory.path().join("existing.png");
+        let existing_path = directory.path().join("20261003-ab12.png");
         fs::write(&temporary_path, b"new image bytes")
             .await
             .unwrap();
@@ -459,16 +563,46 @@ mod image_store_tests {
             .await
             .unwrap();
 
-        let error = publish_image_with(directory.path(), &temporary_path, "png", || {
-            "existing".to_owned()
-        })
-        .await
-        .unwrap_err();
+        let error =
+            publish_image_with(directory.path(), &temporary_path, "png", "20261003", || {
+                "ab12".to_owned()
+            })
+            .await
+            .unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(
             fs::read(&existing_path).await.unwrap(),
             b"existing image bytes"
+        );
+    }
+
+    #[test]
+    fn image_dates_require_exact_ascii_calendar_dates() {
+        let now = SystemTime::UNIX_EPOCH;
+        assert_eq!(image_date_from_query("date=20240229", now), "20240229");
+        for query in [
+            "",
+            "date=2024022",
+            "date=20240x29",
+            "date=20261301",
+            "date=20260230",
+            "date=20250229",
+        ] {
+            assert_eq!(image_date_from_query(query, now), "19700101", "{query}");
+        }
+    }
+
+    #[test]
+    fn utc_date_uses_unix_days_and_gregorian_leap_years() {
+        assert_eq!(utc_date_at(SystemTime::UNIX_EPOCH), "19700101");
+        assert_eq!(
+            utc_date_at(SystemTime::UNIX_EPOCH + Duration::from_secs(951_782_400)),
+            "20000229"
+        );
+        assert_eq!(
+            utc_date_at(SystemTime::UNIX_EPOCH + Duration::from_secs(1_709_164_800)),
+            "20240229"
         );
     }
 }

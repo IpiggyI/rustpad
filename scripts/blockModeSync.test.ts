@@ -1,14 +1,38 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
 
-import {
-  type BlockSnapshot,
-  type SnapshotStorage,
-  loadBlockSnapshot,
-  saveBlockSnapshot,
-} from "../src/blockModeSync.ts";
+import type { BlockSnapshot, SnapshotStorage } from "../src/blockModeSync.ts";
+
+register(new URL("./register-ts-resolve.mjs", import.meta.url));
+
+const { loadBlockSnapshot, saveBlockSnapshot } = await import(
+  "../src/blockModeSync.ts"
+);
 
 const PREFIX = "block-workspace:snapshot:";
+
+test("snapshot save/load retains collapsed image names and fold records", () => {
+  const storage = createMemoryStorage();
+  const input = snapshot("body");
+  input.blocks[0].collapsedImages = [
+    "20261003-k3f9.png",
+    "a".repeat(32) + ".png",
+  ];
+  input.blocks[0].folds = [{ startLineNumber: 1, endLineNumber: 3 }];
+  saveBlockSnapshot("images", input, storage);
+  const result = loadBlockSnapshot("images", storage)!;
+  assert.deepEqual(
+    result.blocks[0].collapsedImages,
+    input.blocks[0].collapsedImages,
+  );
+  assert.deepEqual(result.blocks[0].folds, input.blocks[0].folds);
+  const { content, ...initialBlock } = result.blocks[0];
+  assert.deepEqual(
+    initialBlock.collapsedImages,
+    input.blocks[0].collapsedImages,
+  );
+});
 
 function quotaError(): DOMException {
   return new DOMException("The quota has been exceeded.", "QuotaExceededError");

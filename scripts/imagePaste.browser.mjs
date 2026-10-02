@@ -224,9 +224,14 @@ async function exercise(context, blocks) {
   const firstText = await value(page);
   assert.match(
     firstText,
-    /^before\n!\[image\]\(api\/images\/[a-z0-9]+\.png\)\nafter$/,
+    /^before\n!\[image\]\(api\/images\/[0-9]{8}-[a-z0-9]{4}\.png\)\nafter$/,
   );
+  const localDate = await page.evaluate(() => {
+    const date = new Date();
+    return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+  });
   const path = firstText.match(/!\[image\]\(([^)]+)\)/)[1];
+  assert.equal(path.split("/").pop().slice(0, 8), localDate);
   const response = await context.request.get(new URL(path, page.url()).href);
   assert.equal(response.status(), 200);
   assert.equal(response.headers()["content-type"], "image/png");
@@ -267,7 +272,7 @@ async function exercise(context, blocks) {
     await held;
     await route.fulfill({ response });
   };
-  await page.route("**/api/images", route);
+  await page.route(/\/api\/images(?:\?.*)?$/, route);
   try {
     await paste(page);
     await Promise.race([
@@ -303,7 +308,7 @@ async function exercise(context, blocks) {
     const trackedText = await value(page);
     assert.match(
       trackedText,
-      /^remote\nabove\n!\[image\]\(api\/images\/[a-z0-9]+\.png\)target\nbelow$/,
+      /^remote\nabove\n!\[image\]\(api\/images\/[0-9]{8}-[a-z0-9]{4}\.png\)target\nbelow$/,
     );
     await expectValue(peer, trackedText);
     await waitForMarker(page, 0);
@@ -316,7 +321,7 @@ async function exercise(context, blocks) {
     );
   } finally {
     release();
-    await page.unroute("**/api/images", route);
+    await page.unroute(/\/api\/images(?:\?.*)?$/, route);
   }
 
   await prepare(page, "replace", [1, 1, 1, 8]);
@@ -342,7 +347,7 @@ async function exercise(context, blocks) {
   const pickedText = await value(page);
   assert.match(
     pickedText,
-    /^!\[image\]\(api\/images\/[a-z0-9]+\.png\)\n!\[image\]\(api\/images\/[a-z0-9]+\.png\)$/,
+    /^!\[image\]\(api\/images\/[0-9]{8}-[a-z0-9]{4}\.png\)\n!\[image\]\(api\/images\/[0-9]{8}-[a-z0-9]{4}\.png\)$/,
   );
   await expectValue(peer, pickedText);
   console.log(

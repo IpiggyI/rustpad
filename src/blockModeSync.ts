@@ -1,3 +1,5 @@
+import { sanitizeCollapsedImages } from "./imageNames";
+
 const SNAPSHOT_KEY_PREFIX = "block-workspace:snapshot:";
 
 export type BlockSnapshot = {
@@ -12,6 +14,7 @@ export type BlockSnapshot = {
     height?: number;
     collapsed?: boolean;
     folds?: unknown;
+    collapsedImages?: string[];
   }>;
 };
 
@@ -73,6 +76,9 @@ function parseBlock(
     title: block.title,
     language: block.language,
     content: typeof block.content === "string" ? block.content : "",
+    ...(block.collapsedImages === undefined
+      ? {}
+      : { collapsedImages: sanitizeCollapsedImages(block.collapsedImages) }),
   } as BlockSnapshot["blocks"][number];
 }
 

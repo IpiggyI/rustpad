@@ -45,6 +45,7 @@ import {
 import Rustpad, { UserInfo } from "./rustpad";
 import RustpadHeadless from "./rustpad-headless";
 import {
+  COLLAPSED_IMAGES_KEY,
   type FoldMap,
   type FoldSidecarState,
   applyFoldSidecarText,
@@ -104,6 +105,7 @@ function SingleDocView({
   );
   const rustpad = useRef<Rustpad>();
   const imagePaste = useRef<ReturnType<typeof attachImagePaste>>();
+  const imagePreviews = useRef<ReturnType<typeof attachImagePreviews>>();
   const pendingDocumentTitle = useRef<string>();
   const [contentReadyId, setContentReadyId] = useState<string | null>(null);
   const [languageReadyId, setLanguageReadyId] = useState<string | null>(null);
@@ -202,9 +204,32 @@ function SingleDocView({
     editor?.updateOptions({ wordWrap: wordWrap ? "on" : "off" });
   }, [editor, wordWrap]);
 
+  function commitFoldMapEntry(
+    key: string,
+    next: unknown,
+    saved: unknown,
+    shouldWrite: boolean,
+  ) {
+    const lastSaved = persistSingleDocFolds(id, key, next, saved, shouldWrite);
+    if (
+      !shouldWrite ||
+      next === undefined ||
+      !sidecarStateRef.current.initialized
+    )
+      return lastSaved;
+    const map = mergeFoldLanguage(foldMapRef.current, key, next);
+    foldMapRef.current = map;
+    sidecarStateRef.current = { initialized: true, lastValid: map };
+    foldsHeadlessRef.current?.replaceContent(serializeFoldMap(map));
+    return lastSaved;
+  }
+  const commitFoldMapEntryRef = useRef(commitFoldMapEntry);
+  commitFoldMapEntryRef.current = commitFoldMapEntry;
+
   useEffect(() => {
     sidecarStateRef.current = { initialized: false, lastValid: {} };
     foldMapRef.current = {};
+    imagePreviews.current?.setCollapsedImages([]);
 
     function handleSidecarText(text: string, headless: RustpadHeadless) {
       const result = applyFoldSidecarText(
@@ -214,6 +239,9 @@ function SingleDocView({
       );
       sidecarStateRef.current = result.state;
       foldMapRef.current = result.state.lastValid;
+      imagePreviews.current?.setCollapsedImages(
+        result.state.lastValid[COLLAPSED_IMAGES_KEY],
+      );
       if (result.writeText !== undefined) {
         headless.replaceContent(result.writeText);
       }
@@ -280,19 +308,12 @@ function SingleDocView({
         restoring,
         composing,
       );
-      lastSavedFoldsRef.current = persistSingleDocFolds(
-        id,
+      lastSavedFoldsRef.current = commitFoldMapEntry(
         sessionLanguage,
         next,
         saved,
         shouldWrite,
       );
-      if (!shouldWrite || next === undefined) return;
-      if (!sidecarStateRef.current.initialized) return;
-      const map = mergeFoldLanguage(foldMapRef.current, sessionLanguage, next);
-      foldMapRef.current = map;
-      sidecarStateRef.current = { initialized: true, lastValid: map };
-      foldsHeadlessRef.current?.replaceContent(serializeFoldMap(map));
     };
 
     const persistLive = () => {
@@ -573,7 +594,17 @@ function SingleDocView({
             }}
             onMount={(editor, monaco) => {
               attachHeadingEnter(editor, monaco);
-              attachImagePreviews(editor);
+              imagePreviews.current = attachImagePreviews(editor, monaco, {
+                collapsedImages: foldMapRef.current[COLLAPSED_IMAGES_KEY],
+                onCollapsedImagesChange: (collapsedImages) => {
+                  commitFoldMapEntryRef.current(
+                    COLLAPSED_IMAGES_KEY,
+                    collapsedImages,
+                    foldMapRef.current[COLLAPSED_IMAGES_KEY],
+                    true,
+                  );
+                },
+              });
               imagePaste.current = attachImagePaste(
                 editor,
                 monaco,

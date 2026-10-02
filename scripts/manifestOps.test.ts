@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
 
-import {
-  type BlockInfo,
-  type Manifest,
+import type { BlockInfo, Manifest } from "../src/manifestOps.ts";
+
+register(new URL("./register-ts-resolve.mjs", import.meta.url));
+
+const {
   addBlock,
   addBlockAfter,
   doesFoldRecordDiffer,
@@ -19,7 +22,7 @@ import {
   serializeManifest,
   updateBlock,
   updateBlockLayout,
-} from "../src/manifestOps.ts";
+} = await import("../src/manifestOps.ts");
 
 function block(
   id: string,
@@ -1177,4 +1180,39 @@ test("serialize then parse keeps compactHeights on a migrated manifest", () => {
   const again = migrateCompactHeights(parsed);
   assert.equal(again.blocks[0].height, 200);
   assert.equal(again.compactHeights, true);
+});
+test("collapsedImages survive sanitizing, layout patches, metadata updates and migration", () => {
+  const names = ["20261003-k3f9.png", "a".repeat(32) + ".webp"];
+  const original = manifest([
+    { ...a, folds: sampleFolds, collapsedImages: names },
+  ]);
+  const parsed = parseManifest(serializeManifest(original))!;
+  assert.deepEqual(parsed.blocks[0].collapsedImages, names);
+  const updated = updateBlockLayout(parsed, a.id, {
+    height: 333,
+    collapsed: true,
+    folds: [],
+  });
+  assert.deepEqual(updated.blocks[0].collapsedImages, names);
+  const renamed = updateBlock(updated, a.id, {
+    title: "Renamed",
+    language: "markdown",
+  });
+  assert.deepEqual(renamed.blocks[0].collapsedImages, names);
+  assert.deepEqual(
+    migrateCompactHeights(renamed).blocks[0].collapsedImages,
+    names,
+  );
+  assert.deepEqual(
+    migrateLegacyLayout(renamed, { [a.id]: { height: 200 } }).blocks[0]
+      .collapsedImages,
+    names,
+  );
+  const sanitized = updateBlockLayout(original, a.id, {
+    collapsedImages: [names[1], names[0], names[0], "../bad.png"],
+  });
+  assert.equal(sanitized, original);
+  const expanded = updateBlockLayout(original, a.id, { collapsedImages: [] });
+  assert.deepEqual(expanded.blocks[0].collapsedImages, []);
+  assert.deepEqual(expanded.blocks[0].folds, sampleFolds);
 });

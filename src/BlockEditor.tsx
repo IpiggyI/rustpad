@@ -126,6 +126,7 @@ function BlockEditor({
   const [contentReady, setContentReady] = useState(false);
   const rustpad = useRef<Rustpad>();
   const imagePaste = useRef<ReturnType<typeof attachImagePaste>>();
+  const imagePreviews = useRef<ReturnType<typeof attachImagePreviews>>();
   const [users, setUsers] = useState<Record<number, UserInfo>>({});
   // Keep the latest onContentChange in a ref so the connection effect below does
   // not depend on it. The parent passes a fresh inline callback every render;
@@ -144,6 +145,10 @@ function BlockEditor({
   });
   onUpdateLayoutRef.current = onUpdateLayout;
   foldsRef.current = block.folds;
+
+  useEffect(() => {
+    imagePreviews.current?.setCollapsedImages(block.collapsedImages ?? []);
+  }, [block.collapsedImages, editorInstance]);
 
   const docId = `page:${pageId}:block:${block.id}`;
 
@@ -630,7 +635,11 @@ function BlockEditor({
           }}
           onMount={(ed, monaco) => {
             attachHeadingEnter(ed, monaco);
-            attachImagePreviews(ed);
+            imagePreviews.current = attachImagePreviews(ed, monaco, {
+              collapsedImages: block.collapsedImages,
+              onCollapsedImagesChange: (collapsedImages) =>
+                onUpdateLayoutRef.current({ collapsedImages }),
+            });
             imagePaste.current = attachImagePaste(ed, monaco, (description) => {
               toast({
                 title: "Image upload failed",
