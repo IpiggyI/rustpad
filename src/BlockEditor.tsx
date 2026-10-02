@@ -42,6 +42,7 @@ import type { BlockInfo, BlockLayout, MoveDirection } from "./BlockManifest";
 import ImageUploadButton from "./ImageUploadButton";
 import ImeInput from "./ImeInput";
 import { attachImagePaste } from "./imagePaste";
+import { attachImagePreviews } from "./imagePreview";
 import languages from "./languages.json";
 import {
   DEFAULT_BLOCK_BODY_HEIGHT,
@@ -629,6 +630,7 @@ function BlockEditor({
           }}
           onMount={(ed, monaco) => {
             attachHeadingEnter(ed, monaco);
+            attachImagePreviews(ed);
             imagePaste.current = attachImagePaste(ed, monaco, (description) => {
               toast({
                 title: "Image upload failed",

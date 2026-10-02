@@ -28,6 +28,7 @@ import animals from "./animals.json";
 import { copyText } from "./copyText";
 import languageExtensions from "./extensions";
 import { attachImagePaste } from "./imagePaste";
+import { attachImagePreviews } from "./imagePreview";
 import languages from "./languages.json";
 import {
   doesFoldRecordDiffer,
@@ -572,6 +573,7 @@ function SingleDocView({
             }}
             onMount={(editor, monaco) => {
               attachHeadingEnter(editor, monaco);
+              attachImagePreviews(editor);
               imagePaste.current = attachImagePaste(
                 editor,
                 monaco,
