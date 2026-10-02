@@ -68,6 +68,7 @@ async fn test_persist() -> Result<()> {
     let filter = server(ServerConfig {
         expiry_days: 2,
         database: Some(Database::new(&temp_sqlite_uri()?).await?),
+        image_dir: None,
     });
 
     expect_text(&filter, "persist", "").await;
@@ -114,6 +115,7 @@ async fn test_persist_metadata() -> Result<()> {
     let filter = server(ServerConfig {
         expiry_days: 2,
         database: Some(database.clone()),
+        image_dir: None,
     });
 
     let mut client = connect(&filter, "metadata").await?;

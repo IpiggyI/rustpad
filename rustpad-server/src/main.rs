@@ -2,7 +2,7 @@ use std::{
     fs,
     io::{self, IsTerminal, Write},
     net::{Ipv4Addr, SocketAddr, UdpSocket},
-    path::Path,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -91,6 +91,7 @@ async fn start() -> Result<(), String> {
     let config = ServerConfig {
         expiry_days,
         database,
+        image_dir: std::env::var_os("IMAGE_DIR").map(PathBuf::from),
     };
     let (bound_address, serve) = warp::serve(server(config))
         .try_bind_ephemeral(([0, 0, 0, 0], port))

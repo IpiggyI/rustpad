@@ -21,11 +21,14 @@ import {
 import useLocalStorageState from "use-local-storage-state";
 
 import rustpadRaw from "../rustpad-server/src/rustpad.rs?raw";
+import ImageUploadButton from "./ImageUploadButton";
 import ReadCodeConfirm from "./ReadCodeConfirm";
 import Sidebar from "./Sidebar";
 import animals from "./animals.json";
 import { copyText } from "./copyText";
 import languageExtensions from "./extensions";
+import { attachImagePaste } from "./imagePaste";
+import { attachImagePreviews } from "./imagePreview";
 import languages from "./languages.json";
 import {
   doesFoldRecordDiffer,
@@ -100,6 +103,7 @@ function SingleDocView({
     { defaultValue: "" },
   );
   const rustpad = useRef<Rustpad>();
+  const imagePaste = useRef<ReturnType<typeof attachImagePaste>>();
   const pendingDocumentTitle = useRef<string>();
   const [contentReadyId, setContentReadyId] = useState<string | null>(null);
   const [languageReadyId, setLanguageReadyId] = useState<string | null>(null);
@@ -552,6 +556,10 @@ function SingleDocView({
           <Icon as={VscChevronRight} fontSize="md" />
           <Icon as={VscGist} fontSize="md" color="purple.500" />
           <Text>{id}</Text>
+          <ImageUploadButton
+            disabled={contentReadyId !== id}
+            onUpload={(files) => imagePaste.current?.upload(files)}
+          />
         </HStack>
         <Box flex={1} minH={0}>
           <Editor
@@ -565,6 +573,19 @@ function SingleDocView({
             }}
             onMount={(editor, monaco) => {
               attachHeadingEnter(editor, monaco);
+              attachImagePreviews(editor);
+              imagePaste.current = attachImagePaste(
+                editor,
+                monaco,
+                (description) => {
+                  toast({
+                    title: "Image upload failed",
+                    description,
+                    status: "error",
+                    isClosable: true,
+                  });
+                },
+              );
               setEditor(editor);
             }}
           />

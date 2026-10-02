@@ -39,7 +39,10 @@ import {
 } from "react-icons/vsc";
 
 import type { BlockInfo, BlockLayout, MoveDirection } from "./BlockManifest";
+import ImageUploadButton from "./ImageUploadButton";
 import ImeInput from "./ImeInput";
+import { attachImagePaste } from "./imagePaste";
+import { attachImagePreviews } from "./imagePreview";
 import languages from "./languages.json";
 import {
   DEFAULT_BLOCK_BODY_HEIGHT,
@@ -122,6 +125,7 @@ function BlockEditor({
     useState<editor.IStandaloneCodeEditor>();
   const [contentReady, setContentReady] = useState(false);
   const rustpad = useRef<Rustpad>();
+  const imagePaste = useRef<ReturnType<typeof attachImagePaste>>();
   const [users, setUsers] = useState<Record<number, UserInfo>>({});
   // Keep the latest onContentChange in a ref so the connection effect below does
   // not depend on it. The parent passes a fresh inline callback every render;
@@ -600,6 +604,10 @@ function BlockEditor({
             color="red.400"
             onClick={onRemoveBlock}
           />
+          <ImageUploadButton
+            disabled={!contentReady}
+            onUpload={(files) => imagePaste.current?.upload(files)}
+          />
         </HStack>
       </Flex>
 
@@ -622,6 +630,15 @@ function BlockEditor({
           }}
           onMount={(ed, monaco) => {
             attachHeadingEnter(ed, monaco);
+            attachImagePreviews(ed);
+            imagePaste.current = attachImagePaste(ed, monaco, (description) => {
+              toast({
+                title: "Image upload failed",
+                description,
+                status: "error",
+                isClosable: true,
+              });
+            });
             setEditorInstance(ed);
           }}
         />
