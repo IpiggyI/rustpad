@@ -1,5 +1,7 @@
 import type * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 
+import { IMAGE_FILE_PATTERN, localImageDate } from "./imageNames";
+
 type Monaco = typeof monaco;
 
 export const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
@@ -26,8 +28,10 @@ export function imageUploadError(
 }
 
 export function findImageLinks(line: string) {
-  const pattern =
-    /!\[[^\]\r\n]*\]\((api\/images\/[a-z0-9]+\.(?:png|jpg|gif|webp))\)/g;
+  const pattern = new RegExp(
+    `!\\[[^\\]\\r\\n]*\\]\\((api/images/${IMAGE_FILE_PATTERN})\\)`,
+    "g",
+  );
   const links: { path: string; startColumn: number; endColumn: number }[] = [];
   let match;
   while ((match = pattern.exec(line))) {
@@ -73,7 +77,9 @@ function registerImageLinks(m: Monaco) {
 }
 
 async function uploadImage(file: File, signal: AbortSignal): Promise<string> {
-  const response = await fetch(new URL("api/images", window.location.href), {
+  const url = new URL("api/images", window.location.href);
+  url.searchParams.set("date", localImageDate());
+  const response = await fetch(url, {
     method: "POST",
     body: file,
     signal,

@@ -1,18 +1,17 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
 
 import {
   type ManifestInitDecision,
   decideManifestInit,
 } from "../src/manifestInit.ts";
-import {
-  type BlockInfo,
-  type Manifest,
-  migrateCompactHeights,
-  parseManifest,
-  removeBlock,
-  serializeManifest,
-} from "../src/manifestOps.ts";
+import type { BlockInfo, Manifest } from "../src/manifestOps.ts";
+
+register(new URL("./register-ts-resolve.mjs", import.meta.url));
+
+const { migrateCompactHeights, parseManifest, removeBlock, serializeManifest } =
+  await import("../src/manifestOps.ts");
 
 function block(
   id: string,

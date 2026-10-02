@@ -1,4 +1,7 @@
+import { sanitizeCollapsedImages } from "./imageNames";
+
 const FOLDS_KEY_PREFIX = "single-doc:folds:";
+export const COLLAPSED_IMAGES_KEY = "@collapsedImages";
 
 /** Web Storage subset used by fold load/save. Injected in tests. */
 export type FoldStorage = {
@@ -99,7 +102,12 @@ export function parseFoldMap(text: string): FoldMap | null {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return null;
     }
-    return parsed as FoldMap;
+    const map = parsed as FoldMap;
+    if (map[COLLAPSED_IMAGES_KEY] !== undefined)
+      map[COLLAPSED_IMAGES_KEY] = sanitizeCollapsedImages(
+        map[COLLAPSED_IMAGES_KEY],
+      );
+    return map;
   } catch {
     return null;
   }
@@ -118,6 +126,7 @@ export function loadSingleDocFolds(
   language: string,
   storage?: FoldStorage,
 ): unknown {
+  if (language.startsWith("@")) return undefined;
   try {
     const store = resolveStorage(storage);
     const raw = store.getItem(singleDocFoldsKey(id, language));
@@ -140,7 +149,7 @@ export function saveSingleDocFolds(
   storage?: FoldStorage,
 ): void {
   // Unread (undefined) must not be stored as [] — that would look like a user unfold-all.
-  if (record === undefined) return;
+  if (record === undefined || language.startsWith("@")) return;
   try {
     resolveStorage(storage).setItem(
       singleDocFoldsKey(id, language),
@@ -160,7 +169,7 @@ export function loadAllLocalFolds(id: string, storage?: FoldStorage): FoldMap {
       const key = store.key(i);
       if (!key || !key.startsWith(prefix)) continue;
       const language = key.slice(prefix.length);
-      if (!language) continue;
+      if (!language || language.startsWith("@")) continue;
       try {
         const record = parseRecord(store.getItem(key));
         if (record !== undefined) map[language] = record;
@@ -188,6 +197,7 @@ export function writeFoldMapToCache(
   storage?: FoldStorage,
 ): void {
   for (const language of Object.keys(map)) {
+    if (language.startsWith("@")) continue;
     saveSingleDocFolds(id, language, map[language], storage);
   }
 }
@@ -197,7 +207,13 @@ export function mergeFoldLanguage(
   language: string,
   memento: unknown,
 ): FoldMap {
-  return { ...map, [language]: memento };
+  return {
+    ...map,
+    [language]:
+      language === COLLAPSED_IMAGES_KEY
+        ? sanitizeCollapsedImages(memento)
+        : memento,
+  };
 }
 
 /** Write `next` when `shouldWrite` is true. Returns the last-saved record. */

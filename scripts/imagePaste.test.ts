@@ -1,16 +1,48 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { type TestContext, test } from "node:test";
 
-import {
+import { localImageDate, sanitizeCollapsedImages } from "../src/imageNames.ts";
+
+register(new URL("./register-ts-resolve.mjs", import.meta.url));
+
+const {
   MAX_IMAGE_SIZE,
   attachImagePaste,
   findImageLinks,
   imageUploadError,
   imagesForPaste,
-} from "../src/imagePaste.ts";
+} = await import("../src/imagePaste.ts");
 
 const png = new File(["png"], "first.png", { type: "image/png" });
 const jpeg = new File(["jpeg"], "second.jpg", { type: "image/jpeg" });
+
+test("local upload dates use calendar fields, including leap day", () => {
+  assert.equal(localImageDate(new Date(2024, 1, 29, 23, 59)), "20240229");
+  assert.equal(localImageDate(new Date(2026, 0, 3)), "20260103");
+});
+
+test("dated and legacy names link exactly; malformed names never link or persist", () => {
+  const names = ["20261003-k3f9.png", "a".repeat(32) + ".webp"];
+  for (const name of names)
+    assert.equal(findImageLinks(`![image](api/images/${name})`).length, 1);
+  const invalid = [
+    "-20261003-k3f9.png",
+    "20261003-k3f9-.png",
+    "20261003--k3f9.png",
+    "20261003-k3f.png",
+    "20261003-k3f99.png",
+    "../20261003-k3f9.png",
+    "20261003-K3f9.png",
+    "abc-def.png",
+  ];
+  for (const name of invalid)
+    assert.deepEqual(findImageLinks(`![image](api/images/${name})`), []);
+  assert.deepEqual(
+    sanitizeCollapsedImages([...names, ...invalid, names[0], null]),
+    [...names].sort(),
+  );
+});
 
 test("non-empty text wins over images, including whitespace", () => {
   assert.deepEqual(imagesForPaste("copied text", [png], false), []);
@@ -323,7 +355,10 @@ test("uses the live tracked selection, keeps upload order, and cleans the marker
   });
   const bodies: unknown[] = [];
   t.mock.method(globalThis, "fetch", async (url, options) => {
-    assert.equal(String(url), "http://localhost/sub/api/images");
+    assert.equal(
+      String(url),
+      `http://localhost/sub/api/images?date=${localImageDate()}`,
+    );
     assert.equal(options?.method, "POST");
     bodies.push(options?.body);
     await held;

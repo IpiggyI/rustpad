@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
 
-import { shouldPersistSingleDocFolds } from "../src/manifestOps.ts";
 import {
   keepHeadingFolds,
   readFoldRecord,
   readFoldRecordSync,
   restoreFoldRecord,
 } from "../src/markdownFolding.ts";
+
+register(new URL("./register-ts-resolve.mjs", import.meta.url));
+
+const { shouldPersistSingleDocFolds } = await import("../src/manifestOps.ts");
 
 const sampleFolds = [
   {

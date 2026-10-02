@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
 
-import { shouldPersistSingleDocFolds } from "../src/manifestOps.ts";
-import {
-  type FoldStorage,
+import type { FoldStorage } from "../src/singleDocFolds.ts";
+
+register(new URL("./register-ts-resolve.mjs", import.meta.url));
+
+const { shouldPersistSingleDocFolds } = await import("../src/manifestOps.ts");
+const {
+  COLLAPSED_IMAGES_KEY,
   applyFoldSidecarText,
   flushFoldMementoOnUnmount,
   foldMementoForFlush,
@@ -19,7 +24,70 @@ import {
   singleDocFoldsLegacyKey,
   subscribeFoldPersistFlush,
   writeFoldMapToCache,
-} from "../src/singleDocFolds.ts";
+} = await import("../src/singleDocFolds.ts");
+
+test("collapse and fold entries merge in either order without losing reserved state", () => {
+  const names = ["20261003-k3f9.png", "a".repeat(32) + ".png"];
+  for (const collapseFirst of [true, false]) {
+    const storage = createMemoryStorage();
+    let map = collapseFirst
+      ? mergeFoldLanguage({}, COLLAPSED_IMAGES_KEY, [
+          names[1],
+          names[0],
+          names[0],
+        ])
+      : mergeFoldLanguage({}, "markdown", sampleFolds);
+    map = collapseFirst
+      ? mergeFoldLanguage(map, "markdown", sampleFolds)
+      : mergeFoldLanguage(map, COLLAPSED_IMAGES_KEY, names);
+    const parsed = parseFoldMap(serializeFoldMap(map))!;
+    assert.deepEqual(parsed[COLLAPSED_IMAGES_KEY], names);
+    assert.deepEqual(parsed.markdown, sampleFolds);
+    writeFoldMapToCache("doc-images", parsed, storage);
+    assert.equal(
+      storage.getItem(singleDocFoldsKey("doc-images", COLLAPSED_IMAGES_KEY)),
+      null,
+    );
+    assert.deepEqual(loadAllLocalFolds("doc-images", storage), {
+      markdown: sampleFolds,
+    });
+    const result = applyFoldSidecarText(
+      "broken",
+      { initialized: true, lastValid: parsed },
+      {},
+    );
+    assert.deepEqual(parseFoldMap(result.writeText!), parsed);
+  }
+});
+
+test("reserved entries are sanitized and never seeded or restored as languages", () => {
+  const name = "20261003-k3f9.png";
+  const storage = createMemoryStorage({
+    [singleDocFoldsKey("doc-images", COLLAPSED_IMAGES_KEY)]: JSON.stringify([
+      name,
+    ]),
+  });
+  assert.deepEqual(loadAllLocalFolds("doc-images", storage), {});
+  assert.equal(
+    loadSingleDocFolds("doc-images", COLLAPSED_IMAGES_KEY, storage),
+    undefined,
+  );
+  persistSingleDocFolds(
+    "doc-images",
+    COLLAPSED_IMAGES_KEY,
+    [name],
+    [],
+    true,
+    storage,
+  );
+  assert.deepEqual(storage.writes, []);
+  assert.deepEqual(
+    parseFoldMap(
+      JSON.stringify({ [COLLAPSED_IMAGES_KEY]: [name, "../bad.png", name] }),
+    ),
+    { [COLLAPSED_IMAGES_KEY]: [name] },
+  );
+});
 
 const sampleFolds = [
   {

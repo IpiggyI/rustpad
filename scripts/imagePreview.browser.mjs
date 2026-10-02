@@ -91,7 +91,11 @@ async function uploadFixture(page) {
     const image = await new Promise((resolve) =>
       canvas.toBlob(resolve, "image/png"),
     );
-    const response = await fetch(new URL("api/images", window.location.href), {
+    const date = new Date();
+    const localDate = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
+    const url = new URL("api/images", window.location.href);
+    url.searchParams.set("date", localDate);
+    const response = await fetch(url, {
       method: "POST",
       body: image,
     });
@@ -99,7 +103,13 @@ async function uploadFixture(page) {
       throw new Error(
         `Fixture upload failed: ${response.status} ${await response.text()}. Enable IMAGE_DIR on the backend.`,
       );
-    return (await response.json()).path;
+    const { path } = await response.json();
+    if (
+      !/^api\/images\/[0-9]{8}-[a-z0-9]{4}\.png$/.test(path) ||
+      path.slice(11, 19) !== localDate
+    )
+      throw new Error(`Unexpected dated image path: ${path}`);
+    return path;
   });
 }
 
@@ -197,6 +207,22 @@ async function exercise(context, blocks) {
   assert.ok(rect.width <= width + 0.01);
   assert.ok(Math.abs(rect.width / rect.height - 800 / 600) < 0.01);
   await expectUnchanged(page, text, version);
+  assert.ok(
+    rect.width + 20 < width,
+    "Fixture must leave blank preview space to the right.",
+  );
+  let blankPopups = 0;
+  const countBlankPopup = () => blankPopups++;
+  page.on("popup", countBlankPopup);
+  await page.mouse.click(rect.x + rect.width + 10, rect.y + 8);
+  await page.waitForTimeout(300);
+  page.off("popup", countBlankPopup);
+  assert.equal(
+    blankPopups,
+    0,
+    "Blank space to the right of the image must not open a page.",
+  );
+  console.log(`PASS ${label} blank preview space opens no popup`);
   console.log(
     `PASS ${label} previews every local reference on a line, excludes external URLs, and preserves text and image ratio`,
   );
@@ -304,10 +330,180 @@ async function exercise(context, blocks) {
   await page.close();
 }
 
+async function assertNoExtraGutter(page) {
+  const result = await page.evaluate(() => {
+    const node = document.createElement("div");
+    node.style.cssText =
+      "position:fixed;width:800px;height:300px;left:-10000px";
+    document.body.append(node);
+    const bare = monaco.editor.create(node, {
+      ...ed.getRawOptions(),
+      glyphMargin: false,
+      value: ed.getValue(),
+    });
+    const result = {
+      actual: ed.getLayoutInfo().contentLeft,
+      bare: bare.getLayoutInfo().contentLeft,
+    };
+    bare.getModel()?.dispose();
+    bare.dispose();
+    node.remove();
+    return result;
+  });
+  assert.equal(
+    result.actual,
+    result.bare,
+    "An editor without images must keep the bare editor gutter width.",
+  );
+}
+
+async function waitCollapsed(page, count) {
+  await page.waitForFunction((count) => {
+    const toggles = [
+      ...ed.getDomNode().querySelectorAll("[data-image-preview-toggle]"),
+    ];
+    const previews = [
+      ...ed.getDomNode().querySelectorAll("[data-image-preview]"),
+    ];
+    return (
+      toggles.length === count &&
+      toggles.every((node) => node.title === "Expand image preview") &&
+      previews.every(
+        (node) =>
+          parseFloat(node.style.height) === 0 ||
+          getComputedStyle(node).display === "none",
+      )
+    );
+  }, count);
+}
+
+async function waitHeadingFold(page) {
+  await page.waitForFunction(() =>
+    ed
+      ._getViewModel()
+      .getHiddenAreas()
+      .some((range) => range.startLineNumber <= 2 && range.endLineNumber >= 2),
+  );
+}
+
+async function collapsePersistence(context, blocks, collapseFirst) {
+  const id = `pc${blocks ? "b" : "s"}${collapseFirst ? "c" : "f"}${Date.now().toString(36)}`;
+  const url = new URL(base);
+  url.hash = blocks ? `page:${id}` : id;
+  const page = await open(context, url.href, blocks);
+  await assertNoExtraGutter(page);
+  const path = await uploadFixture(page);
+  const reference = `![image](${path})`;
+  const text = blocks
+    ? `${reference}\n${reference}`
+    : `# Heading ${reference}\nbody\n# Duplicate\n${reference}`;
+  if (!blocks) await page.locator("select").first().selectOption("markdown");
+  await page.waitForFunction(
+    (language) => ed.getModel().getLanguageId() === language,
+    blocks ? "plaintext" : "markdown",
+  );
+  await replace(page, text, blocks ? "plaintext" : "markdown");
+  await expectLoaded(page, path, 2);
+  const expanded = page.locator('[data-image-preview-toggle="1"]');
+  await expanded.waitFor({ state: "visible" });
+  const expandedLook = await expanded.textContent();
+  assert.equal(await expanded.getAttribute("title"), "Collapse image preview");
+  if (!blocks && !collapseFirst) {
+    await foldHeading(page);
+    await waitHeadingFold(page);
+  }
+  await expanded.click();
+  await waitCollapsed(page, 2);
+  assert.notEqual(await expanded.textContent(), expandedLook);
+  if (!blocks && collapseFirst) {
+    await foldHeading(page);
+    await waitHeadingFold(page);
+  }
+  const stateId = blocks ? `page:${id}:manifest` : `folds:${id}`;
+  const name = path.slice("api/images/".length);
+  await page.waitForFunction(
+    async ({ stateId, name, blocks }) => {
+      const response = await fetch(
+        new URL(`api/text/${stateId}`, window.location.href),
+      );
+      const raw = await response.text();
+      try {
+        const state = JSON.parse(raw);
+        const names = blocks
+          ? state.blocks[0].collapsedImages
+          : state["@collapsedImages"];
+        return names?.includes(name) && (blocks || state.markdown?.length > 0);
+      } catch {
+        return false;
+      }
+    },
+    { stateId, name, blocks },
+  );
+  await page.reload();
+  await page.waitForFunction(() => window.monaco?.editor.getEditors().length);
+  await page.evaluate(() => {
+    window.ed = monaco.editor.getEditors()[0];
+  });
+  await expectText(page, text);
+  await waitCollapsed(page, 2);
+  if (!blocks) await waitHeadingFold(page);
+  const independent = await browser.newContext();
+  try {
+    const other = await open(independent, url.href, blocks);
+    await expectText(other, text);
+    await waitCollapsed(other, 2);
+    if (!blocks) await waitHeadingFold(other);
+  } finally {
+    await independent.close();
+  }
+  await expanded.click();
+  await expectLoaded(page, path, 2);
+  if (!blocks) await waitHeadingFold(page);
+  await replace(page, "No images remain", blocks ? "plaintext" : "markdown");
+  await assertNoExtraGutter(page);
+  console.log(
+    `PASS ${blocks ? "block" : "single-document"} ${collapseFirst ? "collapse then fold" : "fold then collapse"} persists after reload and in independent storage; duplicate references collapse together; empty editors keep their gutter width`,
+  );
+  await page.close();
+}
+
+async function legacyPreview(context) {
+  const path = `api/images/${"a".repeat(32)}.png`;
+  const url = new URL(base);
+  url.hash = `legacy${Date.now().toString(36)}`;
+  const page = await open(context, url.href, false);
+  await context.route(`**/${path}`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    }),
+  );
+  await replace(page, `![image](${path})`);
+  await expectLoaded(page, path, 1);
+  await page.waitForFunction(() =>
+    ed.getDomNode().querySelector(".detected-link"),
+  );
+  assert.equal(
+    await page.locator("[data-image-preview] a").getAttribute("href"),
+    new URL(path, page.url()).href,
+  );
+  await context.unroute(`**/${path}`);
+  await page.close();
+  console.log("PASS legacy 32-character image names still link and preview");
+}
+
 try {
   const context = await browser.newContext();
   await exercise(context, false);
   await exercise(context, true);
+  await legacyPreview(context);
+  await collapsePersistence(context, true, true);
+  await collapsePersistence(context, false, false);
+  await collapsePersistence(context, false, true);
   await context.close();
 } finally {
   await browser.close();

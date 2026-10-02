@@ -37,14 +37,38 @@ async fn upload<F: Reply + 'static>(
     bytes: &[u8],
     content_type: &str,
 ) -> warp::http::Response<warp::hyper::body::Bytes> {
+    upload_at_path(filter, "/api/images", bytes, content_type).await
+}
+
+async fn upload_at_path<F: Reply + 'static>(
+    filter: &BoxedFilter<(F,)>,
+    path: &str,
+    bytes: &[u8],
+    content_type: &str,
+) -> warp::http::Response<warp::hyper::body::Bytes> {
     warp::test::request()
         .method("POST")
-        .path("/api/images")
+        .path(path)
         .header("content-length", bytes.len().to_string())
         .header("content-type", content_type)
         .body(bytes.to_vec())
         .reply(filter)
         .await
+}
+
+fn assert_dated_image_path(path: &str, extension: &str, expected_date: Option<&str>) {
+    let file_name = path.strip_prefix("api/images/").unwrap();
+    let file_name = file_name.strip_suffix(&format!(".{extension}")).unwrap();
+    let (date, suffix) = file_name.split_once('-').unwrap();
+    assert_eq!(date.len(), 8);
+    assert!(date.bytes().all(|byte| byte.is_ascii_digit()));
+    assert_eq!(suffix.len(), 4);
+    assert!(suffix
+        .bytes()
+        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit()));
+    if let Some(expected_date) = expected_date {
+        assert_eq!(date, expected_date);
+    }
 }
 
 async fn directory_is_empty(path: &Path) -> bool {
@@ -115,12 +139,7 @@ async fn upload_and_read_supported_formats_preserve_bytes_and_headers() {
         assert_eq!(value.as_object().unwrap().len(), 1);
         assert!(path.starts_with("api/images/"));
         assert!(path.ends_with(&format!(".{}", extension)));
-        let name = path.strip_prefix("api/images/").unwrap();
-        let (id, _) = name.split_once('.').unwrap();
-        assert_eq!(id.len(), 32);
-        assert!(id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit()));
+        assert_dated_image_path(path, extension, None);
 
         let image_response = warp::test::request()
             .path(&format!("/{}", path))
@@ -147,6 +166,49 @@ async fn upload_and_read_supported_formats_preserve_bytes_and_headers() {
         count += 1;
     }
     assert_eq!(count, fixtures.len());
+}
+
+#[tokio::test]
+async fn valid_upload_date_is_used_in_the_image_name() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let filter = server(config(Some(temporary_directory.path().to_path_buf())));
+    let response = upload_at_path(
+        &filter,
+        "/api/images?date=20240229",
+        b"\x89PNG\r\n\x1a\nPNG data",
+        "image/png",
+    )
+    .await;
+
+    assert_eq!(response.status(), 200);
+    let value: Value = serde_json::from_slice(response.body()).unwrap();
+    assert_dated_image_path(value["path"].as_str().unwrap(), "png", Some("20240229"));
+}
+
+#[tokio::test]
+async fn absent_or_invalid_upload_dates_fall_back_to_a_dated_image_name() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let filter = server(config(Some(temporary_directory.path().to_path_buf())));
+    let dates = [
+        None,
+        Some("2024022"),
+        Some("20240x29"),
+        Some("20261301"),
+        Some("20260230"),
+        Some("20250229"),
+    ];
+
+    for date in dates {
+        let path = date.map_or_else(
+            || "/api/images".to_owned(),
+            |date| format!("/api/images?date={date}"),
+        );
+        let response =
+            upload_at_path(&filter, &path, b"\x89PNG\r\n\x1a\nPNG data", "image/png").await;
+        assert_eq!(response.status(), 200);
+        let value: Value = serde_json::from_slice(response.body()).unwrap();
+        assert_dated_image_path(value["path"].as_str().unwrap(), "png", None);
+    }
 }
 
 #[tokio::test]
@@ -274,6 +336,12 @@ async fn invalid_image_names_return_404() {
         "a.svg",
         "a-b.png",
         "a_b.png",
+        "-20261003-ab12.png",
+        "20261003-ab12-.png",
+        "20261003--ab12.png",
+        "20261003-abc.png",
+        "20261003-AB12.png",
+        "20261003-ab12-extra.png",
         ".upload.tmp",
         "%2e%2e%2fsecret.png",
         "..%5csecret.png",
@@ -286,6 +354,25 @@ async fn invalid_image_names_return_404() {
         assert_eq!(response.status(), 404, "unexpected response for {name:?}");
         assert_eq!(response.body(), "Image not found.");
     }
+}
+
+#[tokio::test]
+async fn legacy_32_character_image_ids_remain_readable() {
+    let temporary_directory = tempfile::tempdir().unwrap();
+    let image_dir = temporary_directory.path().join("images");
+    tokio::fs::create_dir(&image_dir).await.unwrap();
+    let legacy_id = "a".repeat(32);
+    tokio::fs::write(image_dir.join(format!("{legacy_id}.png")), b"legacy image")
+        .await
+        .unwrap();
+    let filter = server(config(Some(image_dir)));
+
+    let response = warp::test::request()
+        .path(&format!("/api/images/{legacy_id}.png"))
+        .reply(&filter)
+        .await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.body(), "legacy image");
 }
 
 #[tokio::test]

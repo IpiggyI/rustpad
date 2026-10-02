@@ -1,3 +1,5 @@
+import { sanitizeCollapsedImages } from "./imageNames";
+
 export type BlockInfo = {
   id: string;
   title: string;
@@ -5,12 +7,14 @@ export type BlockInfo = {
   height?: number;
   collapsed?: boolean;
   folds?: unknown;
+  collapsedImages?: string[];
 };
 
 export type BlockLayout = {
   height?: number;
   collapsed?: boolean;
   folds?: unknown;
+  collapsedImages?: string[];
 };
 
 export type Manifest = {
@@ -46,7 +50,15 @@ export function sanitizeManifest(manifest: Manifest): Manifest {
       continue;
     }
     seen.add(id);
-    blocks.push(entry as BlockInfo);
+    const block = entry as BlockInfo;
+    blocks.push(
+      block.collapsedImages === undefined
+        ? block
+        : {
+            ...block,
+            collapsedImages: sanitizeCollapsedImages(block.collapsedImages),
+          },
+    );
   }
   return { ...manifest, blocks };
 }
@@ -261,6 +273,13 @@ function applyLayout(block: BlockInfo, layout: BlockLayout): BlockInfo | null {
     next.folds = layout.folds;
     changed = true;
   }
+  if (layout.collapsedImages !== undefined) {
+    const collapsedImages = sanitizeCollapsedImages(layout.collapsedImages);
+    if (!jsonValuesAreEqual(collapsedImages, block.collapsedImages ?? [])) {
+      next.collapsedImages = collapsedImages;
+      changed = true;
+    }
+  }
   return changed ? next : null;
 }
 
@@ -292,6 +311,12 @@ export function migrateLegacyLayout(
     }
     if (block.collapsed === undefined && fromLegacy.collapsed !== undefined) {
       adopted.collapsed = fromLegacy.collapsed;
+    }
+    if (
+      block.collapsedImages === undefined &&
+      fromLegacy.collapsedImages !== undefined
+    ) {
+      adopted.collapsedImages = fromLegacy.collapsedImages;
     }
     const nextBlock = applyLayout(block, adopted);
     if (!nextBlock) return block;
