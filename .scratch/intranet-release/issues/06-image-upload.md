@@ -32,3 +32,5 @@
 
 合并 main 的第三期改动（`5be8ead`：带日期的图片名、只有图片本身可点击、预览可收起）后，发布检查里对上传结果的断言改成新名字格式
 `api/images/<8 位数字>-<4 位小写字母或数字>.png`，由同一会话完成。合并后的 `cargo test -p rustpad-server`、`npm run check`、`npm test`（258 项）通过。
+`scripts/package-intranet.sh` 生成 `release/rustpad-intranet-windows-x64-20261003-df5b5b6.zip`，`scripts/check-intranet-release.sh`
+对该包退出码 0，上传的 PNG 按新格式命名。在本分支代码上 `imagePaste.browser.mjs` 和 `imagePreview.browser.mjs` 共 34 项通过，没有失败项。
