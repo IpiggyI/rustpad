@@ -120,7 +120,7 @@ Status: ready-for-agent
   - `rustpad.exe`，即重命名后的 `rustpad-server.exe`；
   - `dist\`；
   - `.env`，写着
-    `SQLITE_URI=sqlite://rustpad.db`、`PORT=3030`、`RUST_LOG=warn`；
+    `SQLITE_URI=sqlite://rustpad.db`、`PORT=3030`、`RUST_LOG=warn`、`IMAGE_DIR=images`；
   - `使用说明.txt`。
 - 数据文件 `rustpad.db`
   在第一次运行时自动生成。从资源管理器双击时，工作目录就是 exe 所在文件夹，所以
@@ -129,7 +129,7 @@ Status: ready-for-agent
   - 先解压再运行；
   - 首次运行时防火墙弹窗要点“允许”，以及手动放行端口的方法；
   - 其他设备怎样访问；
-  - 数据文件在哪里、怎样备份；
+  - 数据文件和 `images` 文件夹在哪里、怎样一起备份；
   - 怎样从首页继续之前的页面，并提示清除浏览器数据会丢失最近页面记录，但页面本身还在主机上；
   - 怎样修改端口。
 
