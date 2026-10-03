@@ -20,6 +20,7 @@ use warp::{
 use crate::{database::Database, rustpad::Rustpad};
 
 pub mod database;
+mod image_store;
 mod ot;
 mod rustpad;
 
@@ -63,6 +64,7 @@ struct ServerState {
     database: Option<Database>,
     /// Directory for uploaded images, if uploads are enabled.
     image_dir: Option<std::path::PathBuf>,
+    images: Option<Arc<image_store::ImageStore>>,
 }
 
 /// Statistics about the server, returned from an API endpoint.
@@ -114,10 +116,18 @@ fn frontend() -> BoxedFilter<(impl Reply,)> {
 fn backend(config: ServerConfig) -> BoxedFilter<(impl Reply,)> {
     let state = ServerState {
         documents: Default::default(),
-        database: config.database,
+        database: config.database.clone(),
+        images: config
+            .image_dir
+            .clone()
+            .map(|directory| image_store::ImageStore::new(directory, config.database))
+            .map(Arc::new),
         image_dir: config.image_dir,
     };
     tokio::spawn(cleaner(state.clone(), config.expiry_days));
+    if state.images.is_some() {
+        tokio::spawn(image_cleaner(state.clone()));
+    }
 
     let state_filter = warp::any().map(move || state.clone()).boxed();
 
@@ -170,7 +180,7 @@ struct ImagePath {
 }
 
 struct ImageUploadTarget {
-    directory: std::path::PathBuf,
+    store: Arc<image_store::ImageStore>,
     date: String,
 }
 
@@ -204,8 +214,8 @@ async fn check_upload(
     if !tail.as_str().is_empty() {
         return Err(warp::reject::custom(ImageReject(ImageFailure::NotFound)));
     }
-    let directory = state
-        .image_dir
+    let store = state
+        .images
         .ok_or_else(|| warp::reject::custom(ImageReject(ImageFailure::Disabled)))?;
     let content_length = content_length
         .ok_or_else(|| warp::reject::custom(ImageReject(ImageFailure::MissingContentLength)))?;
@@ -213,7 +223,7 @@ async fn check_upload(
         return Err(warp::reject::custom(ImageReject(ImageFailure::TooLarge)));
     }
     Ok(ImageUploadTarget {
-        directory,
+        store,
         date: image_date_from_query(&query, SystemTime::now()),
     })
 }
@@ -230,7 +240,8 @@ async fn upload_image_handler(
             ImageFailure::UnsupportedFormat,
         )));
     };
-    let path = match store_image(&target.directory, extension, &body, &target.date).await {
+    let _guard = target.store.gate.lock().await;
+    let path = match target.store.upload(extension, &body, &target.date).await {
         Ok(path) => path,
         Err(err) => {
             error!("failed to store uploaded image: {}", err);
@@ -333,7 +344,7 @@ fn image_extension(bytes: &[u8]) -> Option<&'static str> {
 
 fn parse_image_name(name: &str) -> Option<(&str, &str)> {
     let (id, extension) = name.split_once('.')?;
-    let legacy_id = !id.is_empty()
+    let legacy_id = id.len() == IMAGE_TEMP_ID_LENGTH
         && id
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit());
@@ -430,7 +441,6 @@ fn random_image_suffix() -> String {
         .collect()
 }
 
-// shortcut: retain images indefinitely to avoid deleting referenced files; ceiling: disk use grows without bound; replace when: image cleanup by reference becomes a requirement.
 async fn store_image(
     directory: &Path,
     extension: &str,
@@ -611,13 +621,21 @@ mod image_store_tests {
 async fn socket_handler(id: String, ws: Ws, state: ServerState) -> Result<impl Reply, Rejection> {
     use dashmap::mapref::entry::Entry;
 
+    let _image_guard = match &state.images {
+        Some(images) => Some(images.gate.lock().await),
+        None => None,
+    };
+
     let mut entry = match state.documents.entry(id.clone()) {
         Entry::Occupied(e) => e.into_ref(),
         Entry::Vacant(e) => {
-            let rustpad = Arc::new(match &state.database {
+            let mut rustpad = match &state.database {
                 Some(db) => db.load(&id).await.map(Rustpad::from).unwrap_or_default(),
                 None => Rustpad::default(),
-            });
+            };
+            rustpad.images = state.images.clone();
+            rustpad.document_id = id.clone();
+            let rustpad = Arc::new(rustpad);
             if let Some(db) = &state.database {
                 tokio::spawn(persister(id, Arc::clone(&rustpad), db.clone()));
             }
@@ -667,6 +685,36 @@ async fn stats_handler(start_time: u64, state: ServerState) -> Result<impl Reply
 
 const HOUR: Duration = Duration::from_secs(3600);
 
+async fn image_cleaner(state: ServerState) {
+    loop {
+        if let Err(err) = clean_images(&state, SystemTime::now()).await {
+            error!("image cleanup failed; retaining unprocessed images: {err:#}");
+        }
+        time::sleep(HOUR).await;
+    }
+}
+
+async fn clean_images(state: &ServerState, now: SystemTime) -> anyhow::Result<()> {
+    let Some(images) = &state.images else {
+        return Ok(());
+    };
+    let _guard = images.gate.lock().await;
+    let mut texts = match &state.database {
+        Some(db) => db.texts().await?,
+        None => Vec::new(),
+    };
+    texts.extend(
+        state
+            .documents
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.rustpad.text())),
+    );
+    let references = image_store::referenced_images(&texts);
+    images.remember_blocks(&texts).await;
+    images.clean(&references, now).await?;
+    Ok(())
+}
+
 /// Reclaims memory for documents.
 async fn cleaner(state: ServerState, expiry_days: u32) {
     loop {
@@ -678,6 +726,10 @@ async fn cleaner(state: ServerState, expiry_days: u32) {
             }
         }
         info!("cleaner removing keys: {:?}", keys);
+        let _image_guard = match &state.images {
+            Some(images) => Some(images.gate.lock().await),
+            None => None,
+        };
         for key in keys {
             state.documents.remove(&key);
         }

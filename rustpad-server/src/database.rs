@@ -82,4 +82,10 @@ ON CONFLICT(id) DO UPDATE SET
             .await?;
         Ok(row.0 as usize)
     }
+
+    pub(crate) async fn texts(&self) -> Result<Vec<(String, String)>> {
+        Ok(sqlx::query_as("SELECT id, text FROM document")
+            .fetch_all(&self.pool)
+            .await?)
+    }
 }

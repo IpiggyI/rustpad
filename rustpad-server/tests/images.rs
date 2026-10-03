@@ -5,6 +5,8 @@ use rustpad_server::{server, ServerConfig};
 use serde_json::Value;
 use warp::{filters::BoxedFilter, Reply};
 
+pub mod common;
+
 const MAX_IMAGE_SIZE: usize = 10 * 1024 * 1024;
 
 struct ErrorLog(Mutex<Vec<String>>);
@@ -72,13 +74,168 @@ fn assert_dated_image_path(path: &str, extension: &str, expected_date: Option<&s
 }
 
 async fn directory_is_empty(path: &Path) -> bool {
-    tokio::fs::read_dir(path)
+    let mut entries = tokio::fs::read_dir(path).await.unwrap();
+    while let Some(entry) = entries.next_entry().await.unwrap() {
+        if entry.file_name() != ".image-store.lock" {
+            return false;
+        }
+    }
+    true
+}
+
+#[tokio::test]
+async fn repeated_uploads_reuse_the_same_image_across_dates() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = config(Some(directory.path().to_path_buf()));
+    let filter = server(settings.clone());
+    let bytes = b"\x89PNG\r\n\x1a\nrepeated image";
+    let first = upload_at_path(&filter, "/api/images?date=20261003", bytes, "image/png").await;
+    assert_eq!(first.status(), 200);
+    let second = upload_at_path(&filter, "/api/images?date=20261004", bytes, "image/png").await;
+    assert_eq!(second.status(), 200);
+    assert_eq!(
+        first.body(),
+        second.body(),
+        "identical bytes must reuse the stored path"
+    );
+}
+
+#[tokio::test]
+async fn startup_cleanup_removes_an_expired_unreferenced_image() {
+    let directory = tempfile::tempdir().unwrap();
+    let name = "20261003-ab12.png";
+    tokio::fs::write(directory.path().join(name), b"\x89PNG\r\n\x1a\nunused")
         .await
-        .unwrap()
-        .next_entry()
+        .unwrap();
+    tokio::fs::write(
+        directory.path().join(".image-state.json"),
+        serde_json::to_vec(&serde_json::json!({name: 1})).unwrap(),
+    )
+    .await
+    .unwrap();
+    let filter = server(config(Some(directory.path().to_path_buf())));
+    tokio::task::yield_now().await;
+    for _ in 0..100 {
+        if !directory.path().join(name).exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        !directory.path().join(name).exists(),
+        "expired image still occupies disk space"
+    );
+    let response = warp::test::request()
+        .path(&format!("/api/images/{name}"))
+        .reply(&filter)
+        .await;
+    assert_eq!(response.status(), 404);
+}
+
+#[tokio::test]
+async fn restored_then_removed_reference_resets_cleanup_through_real_edits() {
+    let directory = tempfile::tempdir().unwrap();
+    let name = "20261003-ab12.png";
+    tokio::fs::write(directory.path().join(name), b"\x89PNG\r\n\x1a\nimage")
         .await
+        .unwrap();
+    let recently_orphaned = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .is_none()
+        .as_secs();
+    tokio::fs::write(
+        directory.path().join(".image-state.json"),
+        serde_json::to_vec(&serde_json::json!({name: recently_orphaned})).unwrap(),
+    )
+    .await
+    .unwrap();
+    let filter = server(config(Some(directory.path().to_path_buf())));
+    let mut client = common::connect(&filter, "restore").await.unwrap();
+    common::expect_empty_initial(&mut client, 0).await.unwrap();
+    let text = format!("![image](api/images/{name})");
+    client
+        .send(&serde_json::json!({"Edit": {"revision": 0, "operation": [text]}}))
+        .await;
+    assert!(client.recv().await.unwrap().get("History").is_some());
+    client
+        .send(&serde_json::json!({"Edit": {"revision": 1, "operation": [-(text.len() as i64)]}}))
+        .await;
+    assert!(client.recv().await.unwrap().get("History").is_some());
+    common::expect_text(&filter, "restore", "").await;
+    let metadata: Value = serde_json::from_slice(
+        &tokio::fs::read(directory.path().join(".image-state.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(metadata.get(name), Some(&Value::Null));
+    assert!(directory.path().join(name).exists());
+}
+
+#[tokio::test]
+async fn restoring_a_persisted_block_protects_images_without_editing_its_body() {
+    use rustpad_server::database::{Database, PersistedDocument};
+    let directory = tempfile::tempdir().unwrap();
+    let name = "20261003-ab12.png";
+    tokio::fs::write(directory.path().join(name), b"\x89PNG\r\n\x1a\nimage")
+        .await
+        .unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    tokio::fs::write(
+        directory.path().join(".image-state.json"),
+        serde_json::to_vec(&serde_json::json!({name: now})).unwrap(),
+    )
+    .await
+    .unwrap();
+    let db = Database::new(&format!(
+        "sqlite://{}",
+        directory.path().join("docs.db").display()
+    ))
+    .await
+    .unwrap();
+    let empty = r#"{"version":1,"blocks":[]}"#;
+    let restored = r#"{"version":1,"blocks":[{"id":"abc123"}]}"#;
+    for (id, text) in [
+        ("page:example:manifest", empty.to_owned()),
+        (
+            "page:example:block:abc123",
+            format!("![image](api/images/{name})"),
+        ),
+    ] {
+        db.store(
+            id,
+            &PersistedDocument {
+                text,
+                language: None,
+                title: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let filter = server(ServerConfig {
+        database: Some(db),
+        ..config(Some(directory.path().to_owned()))
+    });
+    let mut client = common::connect(&filter, "page:example:manifest")
+        .await
+        .unwrap();
+    common::expect_identity(&mut client, 0).await.unwrap();
+    assert!(client.recv().await.unwrap().get("History").is_some());
+    client.send(&serde_json::json!({"Edit": {"revision": 1, "operation": [-(empty.len() as i64), restored]}})).await;
+    assert!(client.recv().await.unwrap().get("History").is_some());
+    client.send(&serde_json::json!({"Edit": {"revision": 2, "operation": [-(restored.len() as i64), empty]}})).await;
+    assert!(client.recv().await.unwrap().get("History").is_some());
+    let metadata: Value = serde_json::from_slice(
+        &tokio::fs::read(directory.path().join(".image-state.json"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(metadata.get(name), Some(&Value::Null));
 }
 
 #[tokio::test]
@@ -162,10 +319,57 @@ async fn upload_and_read_supported_formats_preserve_bytes_and_headers() {
     let mut entries = tokio::fs::read_dir(&image_dir).await.unwrap();
     let mut count = 0;
     while let Some(entry) = entries.next_entry().await.unwrap() {
+        if entry.file_name() == ".image-state.json" || entry.file_name() == ".image-store.lock" {
+            continue;
+        }
         assert!(!entry.file_name().to_str().unwrap().starts_with('.'));
         count += 1;
     }
     assert_eq!(count, fixtures.len());
+}
+
+#[tokio::test]
+async fn concurrent_uploads_reuse_one_file_but_different_bytes_do_not() {
+    let directory = tempfile::tempdir().unwrap();
+    let filter = server(config(Some(directory.path().to_path_buf())));
+    let bytes = b"\x89PNG\r\n\x1a\nshared";
+    let (first, second) = tokio::join!(
+        upload(&filter, bytes, "image/png"),
+        upload(&filter, bytes, "image/png")
+    );
+    assert_eq!(first.status(), 200);
+    assert_eq!(second.status(), 200);
+    assert_eq!(first.body(), second.body());
+    let other = upload(&filter, b"\x89PNG\r\n\x1a\nunique", "image/png").await;
+    assert_eq!(other.status(), 200);
+    assert_ne!(first.body(), other.body());
+    let mut entries = tokio::fs::read_dir(directory.path()).await.unwrap();
+    let mut count = 0;
+    while let Some(entry) = entries.next_entry().await.unwrap() {
+        if entry.path().extension().is_some_and(|ext| ext == "png") {
+            count += 1;
+        }
+    }
+    assert_eq!(count, 2);
+}
+
+#[tokio::test]
+async fn identical_upload_reuses_a_legacy_image_without_rewriting_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let name = format!("{}.png", "a".repeat(32));
+    let bytes = b"\x89PNG\r\n\x1a\nlegacy";
+    tokio::fs::write(directory.path().join(&name), bytes)
+        .await
+        .unwrap();
+    let filter = server(config(Some(directory.path().to_path_buf())));
+    let response = upload(&filter, bytes, "image/png").await;
+    assert_eq!(response.status(), 200);
+    let result: Value = serde_json::from_slice(response.body()).unwrap();
+    assert_eq!(result["path"], format!("api/images/{name}"));
+    assert_eq!(
+        tokio::fs::read(directory.path().join(name)).await.unwrap(),
+        bytes
+    );
 }
 
 #[tokio::test]
@@ -323,6 +527,9 @@ async fn invalid_image_names_return_404() {
     tokio::fs::write(image_dir.join(".upload.tmp"), b"partial bytes")
         .await
         .unwrap();
+    tokio::fs::write(image_dir.join("notes.png"), b"unmanaged image")
+        .await
+        .unwrap();
     let filter = server(config(Some(image_dir)));
     for name in [
         "",
@@ -346,6 +553,7 @@ async fn invalid_image_names_return_404() {
         "%2e%2e%2fsecret.png",
         "..%5csecret.png",
         "missing.png",
+        "notes.png",
     ] {
         let response = warp::test::request()
             .path(&format!("/api/images/{}", name))

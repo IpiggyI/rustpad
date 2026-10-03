@@ -2,12 +2,13 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use futures::prelude::*;
 use log::{info, warn};
 use operational_transform::OperationSeq;
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Notify};
 use warp::ws::{Message, WebSocket};
@@ -16,6 +17,9 @@ use crate::{database::PersistedDocument, ot::transform_index};
 
 /// The main object representing a collaborative session.
 pub struct Rustpad {
+    pub(crate) images: Option<Arc<crate::image_store::ImageStore>>,
+    pub(crate) document_id: String,
+    edit_lock: tokio::sync::Mutex<()>,
     /// State modified by critical sections of the code.
     state: RwLock<State>,
     /// Incremented to obtain unique user IDs.
@@ -107,6 +111,9 @@ impl Default for Rustpad {
     fn default() -> Self {
         let (tx, _) = broadcast::channel(16);
         Self {
+            images: None,
+            document_id: String::new(),
+            edit_lock: Default::default(),
             state: Default::default(),
             count: Default::default(),
             notify: Default::default(),
@@ -290,7 +297,13 @@ impl Rustpad {
                 revision,
                 operation,
             } => {
+                let _edit_guard = self.edit_lock.lock().await;
+                let _image_guard = match &self.images {
+                    Some(images) => Some(images.gate.lock().await),
+                    None => None,
+                };
                 self.apply_edit(id, revision, operation)
+                    .await
                     .context("invalid edit operation")?;
                 self.notify.notify_waiters();
             }
@@ -323,7 +336,12 @@ impl Rustpad {
         Ok(())
     }
 
-    fn apply_edit(&self, id: u64, revision: usize, mut operation: OperationSeq) -> Result<()> {
+    async fn apply_edit(
+        &self,
+        id: u64,
+        revision: usize,
+        mut operation: OperationSeq,
+    ) -> Result<()> {
         info!(
             "edit: id = {}, revision = {}, base_len = {}, target_len = {}",
             id,
@@ -331,22 +349,30 @@ impl Rustpad {
             operation.base_len(),
             operation.target_len()
         );
-        let state = self.state.upgradable_read();
-        let len = state.operations.len();
-        if revision > len {
-            bail!("got revision {}, but current is {}", revision, len);
+        let new_text = {
+            let state = self.state.read();
+            let len = state.operations.len();
+            if revision > len {
+                bail!("got revision {}, but current is {}", revision, len);
+            }
+            for history_op in &state.operations[revision..] {
+                operation = operation.transform(&history_op.operation)?.0;
+            }
+            if operation.target_len() > 256 * 1024 {
+                bail!(
+                    "target length {} is greater than 256 KiB maximum",
+                    operation.target_len()
+                );
+            }
+            operation.apply(&state.text)?
+        };
+        if let Some(images) = &self.images {
+            images
+                .protect_document(&self.document_id, &new_text)
+                .await
+                .context("failed to protect image references")?;
         }
-        for history_op in &state.operations[revision..] {
-            operation = operation.transform(&history_op.operation)?.0;
-        }
-        if operation.target_len() > 256 * 1024 {
-            bail!(
-                "target length {} is greater than 256 KiB maximum",
-                operation.target_len()
-            );
-        }
-        let new_text = operation.apply(&state.text)?;
-        let mut state = RwLockUpgradableReadGuard::upgrade(state);
+        let mut state = self.state.write();
         for (_, data) in state.cursors.iter_mut() {
             for cursor in data.cursors.iter_mut() {
                 *cursor = transform_index(&operation, *cursor);

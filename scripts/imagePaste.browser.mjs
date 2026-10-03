@@ -207,12 +207,15 @@ async function exercise(context, blocks) {
   const peer = await open(context, url.href, blocks);
   const label = blocks ? "block" : "single-document";
   let uploads = 0;
+  let uploadDate;
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
       new URL(request.url()).pathname.endsWith("/api/images")
-    )
+    ) {
       uploads++;
+      uploadDate = new URL(request.url()).searchParams.get("date");
+    }
   });
 
   await prepare(page, "before\nreplace\nafter", [2, 1, 2, 8]);
@@ -224,14 +227,14 @@ async function exercise(context, blocks) {
   const firstText = await value(page);
   assert.match(
     firstText,
-    /^before\n!\[image\]\(api\/images\/[0-9]{8}-[a-z0-9]{4}\.png\)\nafter$/,
+    /^before\n!\[image\]\(api\/images\/(?:[0-9]{8}-[a-z0-9]{4}|[a-z0-9]{32})\.png\)\nafter$/,
   );
   const localDate = await page.evaluate(() => {
     const date = new Date();
     return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
   });
   const path = firstText.match(/!\[image\]\(([^)]+)\)/)[1];
-  assert.equal(path.split("/").pop().slice(0, 8), localDate);
+  assert.equal(uploadDate, localDate);
   const response = await context.request.get(new URL(path, page.url()).href);
   assert.equal(response.status(), 200);
   assert.equal(response.headers()["content-type"], "image/png");
@@ -241,6 +244,21 @@ async function exercise(context, blocks) {
   assert.equal(uploads, 1);
   console.log(
     `PASS ${label} PNG paste replaces selection, reads back image/png, and syncs`,
+  );
+
+  await prepare(page, "", [1, 1, 1, 1]);
+  await expectValue(peer, "");
+  await paste(page);
+  const reference = `![image](${path})`;
+  await expectValue(page, reference);
+  await expectValue(peer, reference);
+  await waitForMarker(page, 0);
+  await page.evaluate(() => ed.trigger("test", "undo", null));
+  await expectValue(peer, "");
+  await page.evaluate(() => ed.trigger("test", "redo", null));
+  await expectValue(peer, reference);
+  console.log(
+    `PASS ${label} deleting and pasting again reuses the image path, including undo and redo`,
   );
 
   await prepare(page, "", [1, 1, 1, 1]);
@@ -308,7 +326,7 @@ async function exercise(context, blocks) {
     const trackedText = await value(page);
     assert.match(
       trackedText,
-      /^remote\nabove\n!\[image\]\(api\/images\/[0-9]{8}-[a-z0-9]{4}\.png\)target\nbelow$/,
+      /^remote\nabove\n!\[image\]\(api\/images\/(?:[0-9]{8}-[a-z0-9]{4}|[a-z0-9]{32})\.png\)target\nbelow$/,
     );
     await expectValue(peer, trackedText);
     await waitForMarker(page, 0);
@@ -347,9 +365,10 @@ async function exercise(context, blocks) {
   const pickedText = await value(page);
   assert.match(
     pickedText,
-    /^!\[image\]\(api\/images\/[0-9]{8}-[a-z0-9]{4}\.png\)\n!\[image\]\(api\/images\/[0-9]{8}-[a-z0-9]{4}\.png\)$/,
+    /^!\[image\]\(api\/images\/(?:[0-9]{8}-[a-z0-9]{4}|[a-z0-9]{32})\.png\)\n!\[image\]\(api\/images\/(?:[0-9]{8}-[a-z0-9]{4}|[a-z0-9]{32})\.png\)$/,
   );
   await expectValue(peer, pickedText);
+  assert.equal(pickedText, `${reference}\n${reference}`);
   console.log(
     `PASS ${label} upload button accepts multiple images and replaces selection`,
   );

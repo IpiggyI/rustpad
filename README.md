@@ -33,8 +33,8 @@ after 24 hours of inactivity.
 
 ## Development setup
 
-To run this application, you need to install Rust, `wasm-pack`, and Node.js.
-Then, build the WebAssembly portion of the app:
+To run this application, you need to install Rust 1.89 or later, `wasm-pack`,
+and Node.js. Then, build the WebAssembly portion of the app:
 
 ```
 wasm-pack build rustpad-wasm
@@ -88,7 +88,20 @@ following environment variables on startup:
   expire. (When deploying a Docker container, this should point to the path of a
   mounted volume.)
 - `IMAGE_DIR`: A directory used to store uploaded images. If provided, image
-  uploads are enabled and images are kept indefinitely.
+  uploads are enabled. Uploading identical bytes reuses an existing image path,
+  including across restarts. Images with no document references are collected
+  after a 30-day grace period, checked at startup and hourly. Restoring a reference or
+  uploading the image again renews its protection. Removed blocks and abandoned
+  uploads are also eligible for collection; images still used by another
+  document remain. Cleanup scans both saved and in-memory documents and stops on
+  scan or metadata errors. The grace period is stored in `.image-state.json`
+  inside this directory; back up the entire directory together with the
+  database. Only one running server may own the directory; an OS file lock
+  prevents concurrent modification. Without `SQLITE_URI`, references disappear
+  when their in-memory documents expire or the server restarts. Browser caches,
+  exported text and undo history do not retain images after the grace period.
+  Deduplication compares file bytes, not visual similarity, and existing
+  referenced duplicates keep their original paths.
 - `PORT`: Which local port to listen for HTTP connections on (defaults to 3030).
 - `RUST_LOG`: Directives that control application logging, see the
   [env_logger](https://docs.rs/env_logger/#enabling-logging) docs for more

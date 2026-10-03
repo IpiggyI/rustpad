@@ -156,8 +156,9 @@ stop_server() {
 
 check_image() {
   local attempt=$1
-  step="检查图片读回字节和类型（第 $attempt 次）"
+  step="检查图片读回字节、类型与重复上传复用（第 $attempt 次）"
   python3 - "$workdir" <<'PY'
+import json
 import pathlib
 import sys
 import urllib.request
@@ -168,6 +169,13 @@ with urllib.request.urlopen(f"http://127.0.0.1:3030/{path}", timeout=5) as respo
     assert response.status == 200, response.status
     assert response.headers["Content-Type"] == "image/png", response.headers
     assert response.read() == (directory / "upload.png").read_bytes()
+request = urllib.request.Request("http://127.0.0.1:3030/api/images",
+                                 data=(directory / "upload.png").read_bytes(), method="POST")
+image_count = len(list((directory / "images").glob("*.png")))
+with urllib.request.urlopen(request, timeout=5) as response:
+    assert response.status == 200, response.status
+    assert json.load(response)["path"] == path
+assert len(list((directory / "images").glob("*.png"))) == image_count
 PY
 }
 
@@ -208,6 +216,9 @@ cmp "$workdir/upload.png" "$workdir/images/${image_path##*/}"
 
 step="检查前端资源不访问外部地址"
 (cd "$root" && RUSTPAD_DIST_URL=http://127.0.0.1:3030 node scripts/offlineAssets.browser.mjs)
+
+step="检查图片粘贴、删除后重贴、撤销重做与多人同步"
+(cd "$root" && RUSTPAD_URL=http://127.0.0.1:3030 node scripts/imagePaste.browser.mjs)
 
 step="在浏览器写入单文档"
 doc_id="release$(date +%s%N)"
