@@ -43,13 +43,21 @@ export function planHeadingEnter(input: {
   };
 }
 
+function findFenceEnd(lines: string[], start: number, char: string): number {
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i].match(/^\s*(```+|~~~+)/)?.[1][0] === char) return i;
+  }
+  return -1;
+}
+
 /** Compute folding ranges for ATX headings (`#` ~ `######`), skipping code fences. */
 function computeHeadingRanges(
   lines: string[],
+  preserveUnclosedFence = false,
 ): monaco.languages.FoldingRange[] {
   const ranges: monaco.languages.FoldingRange[] = [];
   const stack: { level: number; start: number }[] = [];
-  let fenceChar: string | null = null;
+  let scanFences = true;
 
   const close = (level: number, endLine: number) => {
     while (stack.length > 0 && stack[stack.length - 1].level >= level) {
@@ -62,16 +70,16 @@ function computeHeadingRanges(
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fence = line.match(/^\s*(```+|~~~+)/);
+    const fence = scanFences && line.match(/^\s*(```+|~~~+)/);
     if (fence) {
-      if (fenceChar === null) {
-        fenceChar = fence[1][0];
-      } else if (fence[1][0] === fenceChar) {
-        fenceChar = null;
+      const end = findFenceEnd(lines, i, fence[1][0]);
+      if (end !== -1) {
+        i = end;
+        continue;
       }
-      continue;
-    }
-    if (fenceChar !== null) {
+      if (!preserveUnclosedFence) break;
+      // Keep existing folds while an opening fence is still being edited.
+      scanFences = false;
       continue;
     }
     const heading = line.match(/^(#{1,6})\s/);
@@ -427,7 +435,7 @@ export function attachFoldingImeHold(
 export function keepHeadingFolds(lines: string[], record: unknown): unknown {
   if (!Array.isArray(record)) return record;
   const starts = new Set(
-    computeHeadingRanges(lines).map((range) => range.start),
+    computeHeadingRanges(lines, true).map((range) => range.start),
   );
   return record.filter((span) =>
     starts.has((span as { startLineNumber?: number })?.startLineNumber ?? -1),
@@ -471,7 +479,7 @@ function removeInvalidRecoveredFolds(
   if (textModel?.getLanguageId() !== "markdown" || !regions?.toFoldRange)
     return;
   const starts = new Set(
-    computeHeadingRanges(textModel.getLinesContent()).map((r) => r.start),
+    computeHeadingRanges(textModel.getLinesContent(), true).map((r) => r.start),
   );
   const kept = [];
   for (let i = 0; i < regions.length; i++) {

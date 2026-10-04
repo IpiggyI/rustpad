@@ -306,6 +306,93 @@ async function remoteEdit(page, context, url) {
   await peerContext.close();
 }
 
+async function fenceTyping(page, context, url) {
+  await prepare(page, "\n\n## First\nfirst body\n## Second\nsecond body", 3);
+  await page.evaluate(async () => {
+    ed.setPosition({ lineNumber: 5, column: 1 });
+    await ed.getAction("editor.fold").run();
+    ed.setPosition({ lineNumber: 1, column: 1 });
+    ed.focus();
+  });
+  const expected = [
+    [4, 4],
+    [6, 6],
+  ];
+  assert.deepEqual((await snapshot(page)).hidden, expected);
+  for (let count = 1; count <= 3; count++) {
+    await page.keyboard.type("`");
+    await page.waitForTimeout(800);
+    const actual = await snapshot(page);
+    assert.deepEqual(actual.hidden, expected, JSON.stringify(actual));
+  }
+  await closeFenceAndReopen(page, context, url, expected);
+}
+
+async function closeFenceAndReopen(page, context, url, expected) {
+  await page.close();
+  const reopened = await open(context, url);
+  await reopened.waitForTimeout(800);
+  assert.deepEqual((await snapshot(reopened)).hidden, expected);
+  await reopened.evaluate(() => {
+    ed.setPosition({ lineNumber: 2, column: 1 });
+    ed.focus();
+  });
+  await reopened.keyboard.type("```");
+  await reopened.waitForTimeout(800);
+  const closed = await snapshot(reopened);
+  assert.deepEqual(closed.hidden, expected);
+  assert.equal(
+    closed.ranges.every((range) => range.source === 0),
+    true,
+  );
+  await reopened.close();
+  const closedReopened = await open(context, url);
+  await closedReopened.waitForTimeout(800);
+  assert.deepEqual((await snapshot(closedReopened)).hidden, expected);
+  await closedReopened.close();
+}
+
+async function fenceAroundHeading(page) {
+  await prepare(page, "\n## Code\ncode body\n\n## Tail\ntail body", 2);
+  await page.evaluate(async () => {
+    ed.setPosition({ lineNumber: 5, column: 1 });
+    await ed.getAction("editor.fold").run();
+    ed.setPosition({ lineNumber: 1, column: 1 });
+    ed.focus();
+  });
+  await page.keyboard.type("```");
+  await page.waitForTimeout(800);
+  assert.deepEqual((await snapshot(page)).hidden, [
+    [3, 4],
+    [6, 6],
+  ]);
+  await page.evaluate(() =>
+    ed.executeEdits("test", [
+      { range: new monaco.Range(4, 1, 4, 1), text: "```" },
+    ]),
+  );
+  await page.waitForTimeout(800);
+  const actual = await snapshot(page);
+  assert.deepEqual(actual.hidden, [[6, 6]]);
+  assert.equal(
+    actual.ranges.some((range) => range.start === 2),
+    false,
+  );
+  await manualFold(page);
+  await page.evaluate(() =>
+    ed.executeEdits("test", [
+      { range: new monaco.Range(1, 1, 1, 1), text: "```\n" },
+    ]),
+  );
+  await page.waitForTimeout(800);
+  assert.equal(
+    (await snapshot(page)).ranges.some(
+      (range) => range.source === 1 && range.start === 3 && range.collapsed,
+    ),
+    true,
+  );
+}
+
 const cases = {
   prepend: prependAndReopen,
   "split-heading": splitHeading,
@@ -315,6 +402,8 @@ const cases = {
   ime: imeAndReopen,
   remote: remoteEdit,
   "middle-insert": middleInsertAndReopen,
+  "fence-typing": fenceTyping,
+  "fence-around-heading": fenceAroundHeading,
 };
 
 try {
