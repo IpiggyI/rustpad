@@ -6,6 +6,7 @@ import {
   keepHeadingFolds,
   readFoldRecord,
   readFoldRecordSync,
+  registerMarkdownFolding,
   restoreFoldRecord,
 } from "../src/markdownFolding.ts";
 
@@ -192,6 +193,42 @@ test("a heading inside a code fence owns no fold", () => {
     ),
     [],
   );
+});
+
+for (const fence of ["```", "~~~"]) {
+  test(`saved headings survive an unclosed ${fence} fence`, () => {
+    const record = [
+      { startLineNumber: 3, endLineNumber: 4, isCollapsed: true },
+    ];
+    assert.deepEqual(
+      keepHeadingFolds([fence, "", "## Existing", "body"], record),
+      record,
+    );
+    assert.deepEqual(
+      keepHeadingFolds([fence, "", "## Existing", "body", fence], record),
+      [],
+    );
+  });
+}
+
+test("the provider skips headings in both closed and unclosed fences", () => {
+  let provider;
+  registerMarkdownFolding({
+    languages: {
+      registerFoldingRangeProvider(language, value) {
+        assert.equal(language, "markdown");
+        provider = value;
+      },
+    },
+  });
+  for (const ending of [[], ["```"]]) {
+    assert.deepEqual(
+      provider.provideFoldingRanges({
+        getLinesContent: () => ["```", "## Code", "body", ...ending],
+      }),
+      [],
+    );
+  }
 });
 
 test("a record that is not an array passes through untouched", () => {
