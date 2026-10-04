@@ -1,8 +1,6 @@
 import { Input, InputProps } from "@chakra-ui/react";
 import { forwardRef, useEffect, useRef } from "react";
 
-import { createImeGate } from "./imeGate";
-
 export type ImeInputProps = Omit<
   InputProps,
   "onChange" | "value" | "defaultValue"
@@ -23,12 +21,12 @@ const ImeInput = forwardRef<HTMLInputElement, ImeInputProps>(function ImeInput(
   forwardedRef,
 ) {
   const innerRef = useRef<HTMLInputElement | null>(null);
-  const gateRef = useRef(createImeGate());
+  const composingRef = useRef(false);
   const lastEmittedRef = useRef(value);
 
   useEffect(() => {
     const el = innerRef.current;
-    if (!el || !gateRef.current.shouldApplyExternalValue()) return;
+    if (!el || composingRef.current) return;
     if (el.value !== value) {
       el.value = value;
     }
@@ -56,26 +54,25 @@ const ImeInput = forwardRef<HTMLInputElement, ImeInputProps>(function ImeInput(
       ref={setRef}
       defaultValue={value}
       onCompositionStart={(event) => {
-        gateRef.current.start();
+        composingRef.current = true;
         onCompositionStart?.(event);
       }}
       onCompositionEnd={(event) => {
-        gateRef.current.end();
+        composingRef.current = false;
         emit(event.currentTarget.value);
         onCompositionEnd?.(event);
       }}
       onChange={(event) => {
         if (
-          !gateRef.current.shouldEmitChange(
-            Boolean((event.nativeEvent as InputEvent).isComposing),
-          )
+          composingRef.current ||
+          (event.nativeEvent as InputEvent).isComposing
         ) {
           return;
         }
         emit(event.target.value);
       }}
       onBlur={(event) => {
-        gateRef.current.end();
+        composingRef.current = false;
         emit(event.currentTarget.value);
         onBlur?.(event);
       }}

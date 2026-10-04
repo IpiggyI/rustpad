@@ -24,26 +24,16 @@ import {
 import RustpadHeadless from "./rustpad-headless";
 import { getWsUri } from "./useHash";
 
-export { createDefaultBlock };
-export { migrateLegacyLayout, updateBlockLayout } from "./manifestOps";
-export type {
-  BlockInfo,
-  BlockLayout,
-  Manifest,
-  MoveDirection,
-} from "./manifestOps";
-
 export function useManifest(
   pageId: string,
   options: {
-    initialBlock?: { content: string; language: string };
     initialManifest?: Manifest;
   } = {},
 ) {
   const fallbackManifest = useRef<Manifest>(
     options.initialManifest ?? {
       version: 1,
-      blocks: [createDefaultBlock(options.initialBlock?.language)],
+      blocks: [createDefaultBlock()],
     },
   );
   const [manifest, setManifest] = useState<Manifest>({
@@ -58,7 +48,6 @@ export function useManifest(
   const lastValidManifest = useRef<Manifest>(fallbackManifest.current);
   const initialized = useRef(false);
   const replayReady = useRef(false);
-  const initialBlockRef = useRef(options.initialBlock);
   const initialManifestRef = useRef(options.initialManifest);
 
   useEffect(() => {
@@ -107,22 +96,6 @@ export function useManifest(
       const seeded = parsed === null;
       if (decision.shouldMigrate || seeded) {
         headless.replaceContent(serializeManifest(next));
-      }
-      if (seeded) {
-        const block = next.blocks[0];
-        if (initialBlockRef.current && block) {
-          window.setTimeout(() => {
-            const blockHeadless = new RustpadHeadless({
-              uri: getWsUri(`page:${pageId}:block:${block.id}`),
-              onContentReady: () => {
-                blockHeadless.replaceContent(
-                  initialBlockRef.current?.content ?? "",
-                );
-                window.setTimeout(() => blockHeadless.dispose(), 100);
-              },
-            });
-          }, 0);
-        }
       }
     }
 

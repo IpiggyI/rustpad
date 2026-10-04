@@ -246,6 +246,26 @@ async function waitForEditorValue(page, blockId, snippet) {
   );
 }
 
+async function dispatchNameInput(input, value, isComposing) {
+  await input.evaluate(
+    (element, event) => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      ).set.call(element, event.value);
+      element.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          data: event.value,
+          inputType: "insertCompositionText",
+          isComposing: event.isComposing,
+        }),
+      );
+    },
+    { value, isComposing },
+  );
+}
+
 try {
   const pageId = `sideblk${Date.now()}`;
   await seedManifest(pageId, {
@@ -380,6 +400,72 @@ try {
   assert.notEqual("aaaaaa", createdId);
   console.log(
     "PASS rename: duplicate names stay distinct; a name click selects that block",
+  );
+
+  const composingName = page.locator('[data-block-name="bbbbbb"]');
+  const mirroredName = page
+    .locator('[data-block-panel="bbbbbb"] input')
+    .first();
+  const peerName = peer.locator('[data-block-name="bbbbbb"]');
+  await composingName.focus();
+  await composingName.dispatchEvent("compositionstart");
+  for (const isComposing of [true, false]) {
+    await dispatchNameInput(
+      composingName,
+      isComposing ? "Intermediate name" : "Draft name",
+      isComposing,
+    );
+    assert.equal(await mirroredName.inputValue(), "Beta");
+  }
+  console.log("PASS IME: composition does not update the shared block name");
+
+  await peerName.fill("Remote name");
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-block-panel="bbbbbb"] input')?.value ===
+      "Remote name",
+  );
+  assert.equal(await composingName.inputValue(), "Draft name");
+  console.log("PASS IME: a remote name does not overwrite the composing input");
+
+  await composingName.dispatchEvent("compositionend", { data: "Draft name" });
+  await waitForManifest(
+    pageId,
+    (manifest) =>
+      manifest.blocks.some(
+        (block) => block.id === "bbbbbb" && block.title === "Draft name",
+      ),
+    "compositionend did not publish the block name",
+  );
+  await peer.waitForFunction(
+    () =>
+      document.querySelector('[data-block-name="bbbbbb"]')?.value ===
+      "Draft name",
+  );
+  await composingName.blur();
+  await composingName.fill("Committed name");
+  assert.equal(await mirroredName.inputValue(), "Committed name");
+  console.log(
+    "PASS IME: compositionend and subsequent typing publish the name",
+  );
+
+  await dispatchNameInput(composingName, "Event-only draft", true);
+  assert.equal(await mirroredName.inputValue(), "Committed name");
+  await dispatchNameInput(composingName, "Event-only committed", false);
+  assert.equal(await mirroredName.inputValue(), "Event-only committed");
+  console.log(
+    "PASS IME: the native event alone can suppress a composing change",
+  );
+
+  await composingName.dispatchEvent("compositionstart");
+  await dispatchNameInput(composingName, "Blurred name", false);
+  assert.equal(await mirroredName.inputValue(), "Event-only committed");
+  await composingName.blur();
+  assert.equal(await mirroredName.inputValue(), "Blurred name");
+  await composingName.fill("After blur");
+  assert.equal(await mirroredName.inputValue(), "After blur");
+  console.log(
+    "PASS IME: blur commits unfinished composition and permits typing",
   );
 
   await clickSidebarSelect(page, createdId);

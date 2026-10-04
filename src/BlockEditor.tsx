@@ -38,14 +38,16 @@ import {
   VscTriangleUp,
 } from "react-icons/vsc";
 
-import type { BlockInfo, BlockLayout, MoveDirection } from "./BlockManifest";
 import ImageUploadButton from "./ImageUploadButton";
 import ImeInput from "./ImeInput";
 import { attachImagePaste } from "./imagePaste";
 import { attachImagePreviews } from "./imagePreview";
 import languages from "./languages.json";
 import {
+  type BlockInfo,
+  type BlockLayout,
   DEFAULT_BLOCK_BODY_HEIGHT,
+  type MoveDirection,
   doesFoldRecordDiffer,
   shouldPersistSingleDocFolds,
 } from "./manifestOps";

@@ -16,46 +16,27 @@ export type HashInfo =
   | { mode: "single"; id: string }
   | { mode: "blocks"; id: string };
 
-export type HashRoute =
-  | { type: "home" }
-  | { type: "page"; id: string }
-  | { type: "single"; id: string }
-  | { type: "new-single" };
-
-/** Home for an empty hash. `#folds:` still allocates a fresh single document. */
-export function routeHash(parsed: ParsedHash): HashRoute {
-  if (parsed.type === "page") return { type: "page", id: parsed.id };
-  if (parsed.type === "single") return { type: "single", id: parsed.id };
-  if (parsed.type === "empty") return { type: "home" };
-  return { type: "new-single" };
-}
-
-export type ParsedHash =
-  | { type: "empty" }
-  | { type: "page"; id: string }
-  | { type: "folds" }
-  | { type: "single"; id: string };
-
 const PAGE_PREFIX = "page:";
 const FOLDS_PREFIX = "folds:";
 
-export function parseHashString(raw: string): ParsedHash {
-  if (!raw) return { type: "empty" };
+/** Home for an empty hash. `#folds:` still allocates a fresh single document. */
+export function parseHashString(
+  raw: string,
+): HashInfo | { mode: "new-single" } {
+  if (!raw) return { mode: "home" };
   if (raw.startsWith(PAGE_PREFIX)) {
-    return { type: "page", id: raw.slice(PAGE_PREFIX.length) };
+    return { mode: "blocks", id: raw.slice(PAGE_PREFIX.length) };
   }
   if (raw.startsWith(FOLDS_PREFIX)) {
-    return { type: "folds" };
+    return { mode: "new-single" };
   }
-  return { type: "single", id: raw };
+  return { mode: "single", id: raw };
 }
 
 function parseHash(): HashInfo {
   const raw = window.location.hash ? window.location.hash.slice(1) : "";
-  const route = routeHash(parseHashString(raw));
-  if (route.type === "page") return { mode: "blocks", id: route.id };
-  if (route.type === "single") return { mode: "single", id: route.id };
-  if (route.type === "home") return { mode: "home" };
+  const route = parseHashString(raw);
+  if (route.mode !== "new-single") return route;
   const id = generateId();
   window.history.replaceState(null, "", "#" + id);
   return { mode: "single", id };
@@ -78,10 +59,3 @@ export function getWsUri(id: string) {
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.href;
 }
-
-function useHash() {
-  const info = useHashInfo();
-  return info.mode === "home" ? "" : info.id;
-}
-
-export default useHash;

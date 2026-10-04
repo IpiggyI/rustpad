@@ -50,14 +50,7 @@ import {
 import useLocalStorageState from "use-local-storage-state";
 
 import BlockEditor from "./BlockEditor";
-import {
-  type BlockInfo,
-  type BlockLayout,
-  Manifest,
-  type MoveDirection,
-  migrateLegacyLayout,
-  useManifest,
-} from "./BlockManifest";
+import { useManifest } from "./BlockManifest";
 import ConnectionStatus from "./ConnectionStatus";
 import Footer from "./Footer";
 import ImeInput from "./ImeInput";
@@ -76,6 +69,13 @@ import {
 } from "./currentBlock";
 import languageExtensions from "./extensions";
 import languages from "./languages.json";
+import {
+  type BlockInfo,
+  type BlockLayout,
+  type Manifest,
+  type MoveDirection,
+  migrateLegacyLayout,
+} from "./manifestOps";
 import { recordRecentPage, updateRecentPageTitle } from "./recentPages";
 import type Rustpad from "./rustpad";
 import RustpadHeadless from "./rustpad-headless";

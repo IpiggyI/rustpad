@@ -114,6 +114,19 @@ try {
   assert.equal(await page.locator(".monaco-editor").count(), 0);
   console.log("PASS empty hash shows the home page");
 
+  for (const reserved of ["folds:", "folds:abc123"]) {
+    await page.goto(`${base}/#${reserved}`);
+    await page.waitForURL(/#[A-Za-z0-9]{6}$/);
+    const allocatedHash = hashOf(page.url());
+    await page.getByText("You are connected!", { exact: true }).waitFor();
+    await page.reload();
+    await page.getByText("You are connected!", { exact: true }).waitFor();
+    assert.equal(hashOf(page.url()), allocatedHash);
+  }
+  console.log(
+    "PASS reserved folds hashes allocate a stable single-document id",
+  );
+
   const singleId = "singld";
   await page.goto(`${base}/#${singleId}`);
   await page.getByText("You are connected!", { exact: true }).waitFor();
