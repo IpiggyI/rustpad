@@ -54,10 +54,10 @@ function findFenceEnd(lines: string[], start: number, char: string): number {
 function computeHeadingRanges(
   lines: string[],
   preserveUnclosedFence = false,
+  scanFences = true,
 ): monaco.languages.FoldingRange[] {
   const ranges: monaco.languages.FoldingRange[] = [];
   const stack: { level: number; start: number }[] = [];
-  let scanFences = true;
 
   const close = (level: number, endLine: number) => {
     while (stack.length > 0 && stack[stack.length - 1].level >= level) {
@@ -78,9 +78,10 @@ function computeHeadingRanges(
         continue;
       }
       if (!preserveUnclosedFence) break;
-      // Keep existing folds while an opening fence is still being edited.
-      scanFences = false;
-      continue;
+      // An unclosed fence means one is still being typed. That new fence may
+      // already pair with a fence of an existing block, so keep every heading
+      // fold until all fences pair again.
+      return computeHeadingRanges(lines, true, false);
     }
     const heading = line.match(/^(#{1,6})\s/);
     if (heading) {
