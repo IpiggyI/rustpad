@@ -211,6 +211,22 @@ for (const fence of ["```", "~~~"]) {
   });
 }
 
+test("saved headings survive a new fence that pairs with a folded block", () => {
+  const record = [
+    { startLineNumber: 2, endLineNumber: 6, isCollapsed: true },
+    { startLineNumber: 7, endLineNumber: 8, isCollapsed: true },
+  ];
+  const body = ["## A", "a body", "```", "code", "```", "## B", "b body"];
+  assert.deepEqual(keepHeadingFolds(["```", ...body], record), record);
+  assert.deepEqual(
+    keepHeadingFolds(
+      ["```", ...body.slice(0, 2), "```", "", ...body.slice(2)],
+      [{ startLineNumber: 2, endLineNumber: 3, isCollapsed: true }],
+    ),
+    [],
+  );
+});
+
 test("the provider skips headings in both closed and unclosed fences", () => {
   let provider;
   registerMarkdownFolding({

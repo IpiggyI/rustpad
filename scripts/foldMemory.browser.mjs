@@ -314,10 +314,31 @@ async function fenceTyping(page, context, url) {
     ed.setPosition({ lineNumber: 1, column: 1 });
     ed.focus();
   });
-  const expected = [
+  await typeFenceAndReopen(page, context, url, [
     [4, 4],
     [6, 6],
-  ];
+  ]);
+}
+
+async function fenceOverFoldedFence(page, context, url) {
+  await prepare(
+    page,
+    "\n\n## First\nfirst body\n```\ncode\n```\n## Second\nsecond body",
+    3,
+  );
+  await page.evaluate(async () => {
+    ed.setPosition({ lineNumber: 8, column: 1 });
+    await ed.getAction("editor.fold").run();
+    ed.setPosition({ lineNumber: 1, column: 1 });
+    ed.focus();
+  });
+  await typeFenceAndReopen(page, context, url, [
+    [4, 7],
+    [9, 9],
+  ]);
+}
+
+async function typeFenceAndReopen(page, context, url, expected) {
   assert.deepEqual((await snapshot(page)).hidden, expected);
   for (let count = 1; count <= 3; count++) {
     await page.keyboard.type("`");
@@ -403,6 +424,7 @@ const cases = {
   remote: remoteEdit,
   "middle-insert": middleInsertAndReopen,
   "fence-typing": fenceTyping,
+  "fence-over-folded-fence": fenceOverFoldedFence,
   "fence-around-heading": fenceAroundHeading,
 };
 
